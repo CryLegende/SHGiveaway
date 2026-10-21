@@ -1,0 +1,102 @@
+settings:
+  timezone: "Europe/Paris"
+  date-format: "dd/MM/yyyy"
+  time-format: "HH:mm"
+
+messages:
+  join-added:
+    - ""
+    - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴇɴ ᴄᴏᴜʀѕ&r &7&l« &6🎉 &8&l»"
+    - ""
+    - "&6🎁 &fRécompense: &e%amount% %prize%"
+    - "&6🎁 &fStatut: &aParticipation prise en compte &8(Automatique)"
+    - "&6🎁 &fTirage: &e%draw_date% &fà &e%draw_time%"
+    - ""
+    - "&8&o(( &7&oMême hors-ligne, vous pouvez gagner."
+    - "&7&oLes résultats seront annoncés sur Discord. &8&o))"
+    - ""
+
+  join-already:
+    - ""
+    - "&7&l« &6&lGiveaway &8&l» &fVous participez déjà pour &e%prize%&f."
+    - "&7&l« &a&lSH &8&l» &7Tirage prévu le &6%draw_date% &7à &6%draw_time%&7."
+    - ""
+
+  winner-announcement:
+    - ""
+    - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴛᴇʀᴍɪɴᴇ&r &7&l« &6🎉 &8&l»"
+    - ""
+    - "&7Tirage au sort terminé pour &e%prize%&7."
+    - "&8• &a%winner_count% &fGagnant&8(&7s&8) &f: &f%winners%"
+    - ""
+
+  winner-personal-online:
+    - ""
+    - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ&r &8• &a&l&nꜰᴇʟɪᴄɪᴛᴀᴛɪᴏɴ&r &7&l« &6🎉 &8&l»"
+    - ""
+    - "&6🎁 &aBravo, vous avez gagné &e%prize%&a !"
+    - "&7Votre récompense giveaway a bien été distribuée."
+
+  no-participants:
+    - "&7&l« &c&lSH &8&l» &cAucun participant éligible pour &e%prize%&c."
+
+sounds:
+  join-added:
+    enabled: true
+    sound: "BLOCK_AMETHYST_BLOCK_CHIME"
+    volume: 1.0
+    pitch: 1.2
+
+  join-already:
+    enabled: true
+    sound: "UI_BUTTON_CLICK"
+    volume: 1.0
+    pitch: 1.0
+
+  winner-announcement:
+    enabled: true
+    sound: "UI_TOAST_CHALLENGE_COMPLETE"
+    volume: 1.0
+    pitch: 1.0
+
+  winner-direct:
+    enabled: true
+    sound: "ENTITY_PLAYER_LEVELUP"
+    volume: 1.0
+    pitch: 1.0
+
+  no-participants:
+    enabled: false
+    sound: "BLOCK_NOTE_BLOCK_BASS"
+    volume: 1.0
+    pitch: 0.8
+
+giveaways:
+  vipelite:
+    enabled: true
+    prize-display: "grade VipElite"
+    winners: 1
+    draw-at: "2026-04-26 20:00"
+
+    # Message de connexion retardé
+    join-message-delay-seconds: 4
+    announce-on-join: true
+
+    # Conditions de rétention / fidélité
+    min-playtime-minutes: 180
+    min-account-age-hours: 48
+
+    # Permissions requises (laisser vide pour tout le monde)
+    required-permissions: []
+
+    # Exclusions Vault (groupes) et permissions directes
+    excluded-groups:
+      - "VipElite"
+    excluded-permissions:
+      - "group.vipelite"
+
+    # Commandes exécutées pour chaque gagnant
+    # Si le gagnant est hors-ligne, elles sont mises en attente jusqu'à sa prochaine connexion
+    # Placeholders disponibles: %player% %uuid%
+    reward-commands:
+      - "lp user %player% parent add vipelite"
