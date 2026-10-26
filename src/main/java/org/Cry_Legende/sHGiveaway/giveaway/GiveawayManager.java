@@ -3,7 +3,9 @@ package org.Cry_Legende.sHGiveaway.giveaway;
 import net.milkbowl.vault.permission.Permission;
 import org.Cry_Legende.sHGiveaway.SHGiveaway;
 import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.Registry;
 import org.bukkit.Sound;
 import org.bukkit.Statistic;
 import org.bukkit.configuration.ConfigurationSection;
@@ -20,6 +22,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -47,6 +50,7 @@ public class GiveawayManager {
     private final Map<String, BukkitTask> tasks = new HashMap<>();
     private final Map<UUID, List<PendingReward>> pendingRewards = new HashMap<>();
     private final List<String> historyEntries = new ArrayList<>();
+    private BukkitTask saveTask;
 
     private File dataFile;
     private FileConfiguration dataConfig;
@@ -80,6 +84,10 @@ public class GiveawayManager {
     }
 
     public void reload() {
+        // Sauvegarde en attente (connexions récentes) : à écrire avant que l'état soit relu depuis le fichier
+        if (saveTask != null) {
+            saveData();
+        }
         cancelAllTasks();
         giveaways.clear();
         states.clear();
@@ -101,10 +109,21 @@ public class GiveawayManager {
                 continue;
             }
 
-            long delayTicks = calculateDelayTicks(giveaway.getDrawAt());
-            BukkitTask task = Bukkit.getScheduler().runTaskLater(plugin, () -> draw(giveaway.getId(), false), delayTicks);
-            tasks.put(giveaway.getId(), task);
+            scheduleDraw(giveaway);
         }
+    }
+
+    private void scheduleDraw(GiveawayDefinition giveaway) {
+        // Attente découpée : un délai en ticks dérive dès que le serveur rame, on revérifie l'heure réelle au plus toutes les 10 minutes
+        long step = Math.min(calculateDelayTicks(giveaway.getDrawAt()), 12000L);
+        BukkitTask task = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (LocalDateTime.now(zoneId).isBefore(giveaway.getDrawAt())) {
+                scheduleDraw(giveaway);
+            } else {
+                draw(giveaway.getId(), false);
+            }
+        }, step);
+        tasks.put(giveaway.getId(), task);
     }
 
     public void handleJoin(Player player) {
@@ -132,13 +151,13 @@ public class GiveawayManager {
                 if (giveaway.isAnnounceOnJoin() && state.getNotified().add(uuid)) {
                     scheduleJoinMessage(player, giveaway, "messages.join-added", "sounds.join-added");
                 }
-                saveData();
+                scheduleSave();
                 continue;
             }
 
             if (participant && giveaway.isAnnounceOnJoin() && state.getNotified().add(uuid)) {
                 scheduleJoinMessage(player, giveaway, "messages.join-already", "sounds.join-already");
-                saveData();
+                scheduleSave();
             }
         }
     }
@@ -607,7 +626,16 @@ public class GiveawayManager {
             String parsed = command
                 .replace("%player%", player.getName())
                 .replace("%uuid%", player.getUniqueId().toString());
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), parsed);
+            dispatchReward(parsed, giveaway.getId());
+        }
+    }
+
+    private void dispatchReward(String command, String giveawayId) {
+        try {
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+        } catch (RuntimeException ex) {
+            // Une commande en échec ne doit pas interrompre le tirage ni faire perdre les récompenses suivantes
+            plugin.getLogger().warning("Commande de récompense en échec (giveaway " + giveawayId + ") '" + command + "' : " + ex.getMessage());
         }
     }
 
@@ -629,7 +657,7 @@ public class GiveawayManager {
             String parsed = reward.commandTemplate
                 .replace("%player%", player.getName())
                 .replace("%uuid%", player.getUniqueId().toString());
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), parsed);
+            dispatchReward(parsed, reward.giveawayId);
             deliveredPerGiveaway.merge(reward.giveawayId, 1, Integer::sum);
 
             appendWinnersLog("DELIVER | giveaway=" + reward.giveawayId + " | winner=" + printablePlayer(player) + " | delivery=on_login");
@@ -674,13 +702,28 @@ public class GiveawayManager {
             return;
         }
 
-        try {
-            Sound sound = Sound.valueOf(soundName.toUpperCase(Locale.ROOT));
-            float volume = (float) config.getDouble(path + ".volume", 1.0D);
-            float pitch = (float) config.getDouble(path + ".pitch", 1.0D);
-            player.playSound(player.getLocation(), sound, volume, pitch);
-        } catch (IllegalArgumentException ex) {
+        Sound sound = sound(soundName);
+        if (sound == null) {
             plugin.getLogger().warning("Son invalide pour '" + path + "': " + soundName);
+            return;
+        }
+        float volume = (float) config.getDouble(path + ".volume", 1.0D);
+        float pitch = (float) config.getDouble(path + ".pitch", 1.0D);
+        player.playSound(player.getLocation(), sound, volume, pitch);
+    }
+
+    /** Son lu en config : ancien nom (ENTITY_PLAYER_LEVELUP) ou clé (minecraft:entity.player.levelup). */
+    static Sound sound(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim();
+        if (s.indexOf(':') >= 0 || s.indexOf('.') >= 0) {
+            NamespacedKey key = NamespacedKey.fromString(s.toLowerCase(Locale.ROOT));
+            return key == null ? null : Registry.SOUND_EVENT.get(key);
+        }
+        try {
+            return (Sound) Sound.class.getField(s.toUpperCase(Locale.ROOT)).get(null);
+        } catch (ReflectiveOperationException | ClassCastException e) {
+            return null;
         }
     }
 
@@ -717,8 +760,8 @@ public class GiveawayManager {
     }
 
     private long calculateDelayTicks(LocalDateTime target) {
-        LocalDateTime now = LocalDateTime.now(zoneId);
-        Duration duration = Duration.between(now, target);
+        // Calculé avec le fuseau : entre deux dates locales, un changement d'heure décalerait le tirage d'une heure
+        Duration duration = Duration.between(ZonedDateTime.now(zoneId), target.atZone(zoneId));
         if (duration.isNegative() || duration.isZero()) {
             return 1L;
         }
@@ -828,7 +871,19 @@ public class GiveawayManager {
         historyEntries.addAll(dataConfig.getStringList("history"));
     }
 
+    /** Regroupe les écritures déclenchées par les connexions (data.yml est réécrit en entier sur le thread principal). */
+    private void scheduleSave() {
+        if (saveTask != null) {
+            return;
+        }
+        saveTask = Bukkit.getScheduler().runTaskLater(plugin, this::saveData, 100L);
+    }
+
     private void saveData() {
+        if (saveTask != null) {
+            saveTask.cancel();
+            saveTask = null;
+        }
         for (Map.Entry<String, GiveawayState> entry : states.entrySet()) {
             String id = entry.getKey();
             GiveawayState state = entry.getValue();
