@@ -21,6 +21,7 @@ Utilisé sur : **Opale**.
 ## Dépendances
 
 - Obligatoires : `Vault`
+- Optionnelle : `SHLogs`
 
 ## Commandes
 
@@ -42,6 +43,8 @@ Fichiers par défaut repris du serveur (secrets remplacés par `CHANGE_ME`). Cli
 plugins/SHGiveaway/
 └── <a href="src/main/resources/config.yml">config.yml</a>
 </pre>
+
+Chaque gagnant (tirage et remise de la récompense à sa connexion) est écrit dans le fichier `gagnants` du dossier `SHGiveaway` de SHLogs (`plugins/SHLogs/`). Sans SHLogs, les lignes passent dans la console. `data.yml` garde l'état des giveaways et l'historique affiché par `/shgiveaway history`.
 
 ## Compilation
 

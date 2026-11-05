@@ -16,8 +16,6 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -41,6 +39,7 @@ public class GiveawayManager {
 
     private static final DateTimeFormatter DRAW_INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter LOG_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final String WINNERS_LOG_FILE = "gagnants";
 
     private final SHGiveaway plugin;
     private final Permission permission;
@@ -54,7 +53,6 @@ public class GiveawayManager {
 
     private File dataFile;
     private FileConfiguration dataConfig;
-    private File winnersLogFile;
 
     private ZoneId zoneId;
     private DateTimeFormatter dateFormat;
@@ -198,10 +196,10 @@ public class GiveawayManager {
                 executeRewardCommandsNow(onlineWinner, giveaway);
                 sendMessageList(onlineWinner, "messages.winner-personal-online", giveaway, winner, winner.getName(), 1);
                 playConfiguredSound(onlineWinner, "sounds.winner-direct");
-                appendWinnersLog("DRAW | giveaway=" + giveaway.getId() + " | winner=" + printablePlayer(winner) + " | delivery=immediate");
+                ActionLog.write(plugin, WINNERS_LOG_FILE, "DRAW | giveaway=" + giveaway.getId() + " | winner=" + printablePlayer(winner) + " | delivery=immediate");
             } else {
                 queueRewardsForLater(winnerUuid, giveaway);
-                appendWinnersLog("DRAW | giveaway=" + giveaway.getId() + " | winner=" + printablePlayer(winner) + " | delivery=queued_on_login");
+                ActionLog.write(plugin, WINNERS_LOG_FILE, "DRAW | giveaway=" + giveaway.getId() + " | winner=" + printablePlayer(winner) + " | delivery=queued_on_login");
             }
         }
 
@@ -660,7 +658,7 @@ public class GiveawayManager {
             dispatchReward(parsed, reward.giveawayId);
             deliveredPerGiveaway.merge(reward.giveawayId, 1, Integer::sum);
 
-            appendWinnersLog("DELIVER | giveaway=" + reward.giveawayId + " | winner=" + printablePlayer(player) + " | delivery=on_login");
+            ActionLog.write(plugin, WINNERS_LOG_FILE, "DELIVER | giveaway=" + reward.giveawayId + " | winner=" + printablePlayer(player) + " | delivery=on_login");
         }
 
         for (Map.Entry<String, Integer> entry : deliveredPerGiveaway.entrySet()) {
@@ -724,20 +722,6 @@ public class GiveawayManager {
             return (Sound) Sound.class.getField(s.toUpperCase(Locale.ROOT)).get(null);
         } catch (ReflectiveOperationException | ClassCastException e) {
             return null;
-        }
-    }
-
-    private void appendWinnersLog(String line) {
-        String formattedLine = "[" + LocalDateTime.now(zoneId).format(LOG_DATE_FORMAT) + "] " + line + System.lineSeparator();
-        try {
-            Files.writeString(
-                winnersLogFile.toPath(),
-                formattedLine,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND
-            );
-        } catch (IOException ex) {
-            plugin.getLogger().warning("Impossible d'écrire dans winners.log: " + ex.getMessage());
         }
     }
 
@@ -808,7 +792,6 @@ public class GiveawayManager {
 
     private void loadDataFile() {
         dataFile = new File(plugin.getDataFolder(), "data.yml");
-        winnersLogFile = new File(plugin.getDataFolder(), "winners.log");
 
         if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) {
             plugin.getLogger().warning("Impossible de créer le dossier du plugin.");
@@ -821,16 +804,6 @@ public class GiveawayManager {
                 }
             } catch (IOException ex) {
                 plugin.getLogger().severe("Erreur création data.yml: " + ex.getMessage());
-            }
-        }
-
-        if (!winnersLogFile.exists()) {
-            try {
-                if (!winnersLogFile.createNewFile()) {
-                    plugin.getLogger().warning("Impossible de créer winners.log.");
-                }
-            } catch (IOException ex) {
-                plugin.getLogger().severe("Erreur création winners.log: " + ex.getMessage());
             }
         }
 

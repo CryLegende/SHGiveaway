@@ -1,9 +1,42 @@
-settings:
-  timezone: "Europe/Paris"
-  date-format: "dd/MM/yyyy"
-  time-format: "HH:mm"
+# ----------------------------------------------------------------#
+#                   Configuration de SHGiveaway                   #
+# ----------------------------------------------------------------#
+#
+# Giveaways planifiés : les joueurs qui remplissent les conditions sont inscrits automatiquement à leur connexion,
+# et le tirage a lieu à la date indiquée. Un gagnant hors-ligne reçoit sa récompense à sa prochaine connexion.
+#
+# Commande :
+#   /shgiveaway reload                                   Recharge config.yml.
+#   /shgiveaway draw <id>                                Tire au sort le giveaway tout de suite.
+#   /shgiveaway status <id>                              Affiche l'état d'un giveaway.
+#   /shgiveaway active                                   Liste les giveaways actifs.
+#   /shgiveaway history (page)                           Affiche les derniers tirages.
+#   /shgiveaway participants <id> (page)                 Liste les participants.
+#   /shgiveaway add <id> <joueur|uuid>                   Inscrit un joueur.
+#   /shgiveaway remove <id> <joueur|uuid>                Désinscrit un joueur.
+#   /shgiveaway blacklist add|remove <id> <joueur|uuid>  Exclut un joueur du giveaway, ou le réintègre.
+#   /shgiveaway blacklist list <id> (page)               Liste les joueurs exclus.
+#
+# Permission :
+#   shgiveaway.admin   Utiliser /shgiveaway (op par défaut).
+#
+# Les gagnants sont écrits dans le fichier gagnants de SHLogs.
 
+settings:
+  # Fuseau horaire des dates de tirage (draw-at).
+  timezone: "Europe/Paris"
+  # Format de %draw_date% dans les messages.
+  date-format: "dd/MM/yyyy"
+  # Format de %draw_time% dans les messages.
+  time-format: "HH:mm"
+  # Nombre de tirages gardés dans l'historique de /shgiveaway history (10 au minimum).
+  history-limit: 100
+
+# Messages envoyés aux joueurs : une ligne par élément, codes couleur &.
+# Placeholders : %giveaway_id%, %prize%, %amount% (nombre de gagnants), %draw_date%, %draw_time%, %winner%, %winners%,
+# %winner_count%.
 messages:
+  # Joueur inscrit à sa connexion.
   join-added:
     - ""
     - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴇɴ ᴄᴏᴜʀѕ&r &7&l« &6🎉 &8&l»"
@@ -16,12 +49,14 @@ messages:
     - "&7&oLes résultats seront annoncés sur Discord. &8&o))"
     - ""
 
+  # Joueur déjà inscrit à sa connexion.
   join-already:
     - ""
     - "&7&l« &6&lGiveaway &8&l» &fVous participez déjà pour &e%prize%&f."
     - "&7&l« &a&lSH &8&l» &7Tirage prévu le &6%draw_date% &7à &6%draw_time%&7."
     - ""
 
+  # Annonce à tout le serveur à la fin du tirage.
   winner-announcement:
     - ""
     - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴛᴇʀᴍɪɴᴇ&r &7&l« &6🎉 &8&l»"
@@ -30,6 +65,7 @@ messages:
     - "&8• &a%winner_count% &fGagnant&8(&7s&8) &f: &f%winners%"
     - ""
 
+  # Message au gagnant, en ligne au tirage ou à sa connexion.
   winner-personal-online:
     - ""
     - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ&r &8• &a&l&nꜰᴇʟɪᴄɪᴛᴀᴛɪᴏɴ&r &7&l« &6🎉 &8&l»"
@@ -37,9 +73,12 @@ messages:
     - "&6🎁 &aBravo, vous avez gagné &e%prize%&a !"
     - "&7Votre récompense giveaway a bien été distribuée."
 
+  # Annonce à tout le serveur quand personne n'est éligible.
   no-participants:
     - "&7&l« &c&lSH &8&l» &cAucun participant éligible pour &e%prize%&c."
 
+# Sons joués avec les messages du même nom (winner-direct accompagne winner-personal-online).
+# Chaque son a : enabled, sound (nom Bukkit ou clé minecraft:...), volume, pitch.
 sounds:
   join-added:
     enabled: true
@@ -71,32 +110,39 @@ sounds:
     volume: 1.0
     pitch: 0.8
 
+# Giveaways, chacun sous son identifiant (celui des commandes /shgiveaway).
 giveaways:
   vipelite:
+    # Activer ce giveaway.
     enabled: true
+    # Récompense affichée dans les messages (%prize%).
     prize-display: "grade VipElite"
+    # Nombre de gagnants tirés.
     winners: 1
+    # Date et heure du tirage (aaaa-MM-jj HH:mm, fuseau settings.timezone).
     draw-at: "2026-04-26 20:00"
 
-    # Message de connexion retardé
+    # Secondes entre la connexion du joueur et son message de participation.
     join-message-delay-seconds: 4
+    # Envoyer le message de participation à la connexion.
     announce-on-join: true
 
-    # Conditions de rétention / fidélité
+    # Temps de jeu minimum, en minutes, pour participer.
     min-playtime-minutes: 180
+    # Ancienneté minimale du compte, en heures, pour participer.
     min-account-age-hours: 48
 
-    # Permissions requises (laisser vide pour tout le monde)
-    required-permissions: []
+    # Permissions requises pour participer (vide : tout le monde).
+    required-permissions:
 
-    # Exclusions Vault (groupes) et permissions directes
+    # Groupes Vault exclus du giveaway.
     excluded-groups:
       - "VipElite"
+    # Permissions qui excluent du giveaway.
     excluded-permissions:
       - "group.vipelite"
 
-    # Commandes exécutées pour chaque gagnant
-    # Si le gagnant est hors-ligne, elles sont mises en attente jusqu'à sa prochaine connexion
-    # Placeholders disponibles: %player% %uuid%
+    # Commandes console lancées pour chaque gagnant (%player%, %uuid%). Pour un gagnant hors-ligne, elles attendent
+    # sa prochaine connexion.
     reward-commands:
       - "lp user %player% parent add vipelite"
