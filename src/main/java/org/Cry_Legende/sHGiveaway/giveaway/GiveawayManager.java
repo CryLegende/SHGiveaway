@@ -1,7 +1,12 @@
 package org.Cry_Legende.sHGiveaway.giveaway;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import net.milkbowl.vault.permission.Permission;
 import org.Cry_Legende.sHGiveaway.SHGiveaway;
+import org.Cry_Legende.sHGiveaway.network.GiveawayDb;
+import org.Cry_Legende.sHGiveaway.network.NetworkGiveaways;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.OfflinePlayer;
@@ -16,6 +21,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -27,13 +33,17 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Consumer;
+import java.util.logging.Level;
 
 public class GiveawayManager {
 
@@ -50,6 +60,11 @@ public class GiveawayManager {
     private final Map<UUID, List<PendingReward>> pendingRewards = new HashMap<>();
     private final List<String> historyEntries = new ArrayList<>();
     private BukkitTask saveTask;
+
+    // Non nul seulement avec SHNetwork : participants, gagnants et récompenses en base partagée, un seul tirage pour le réseau
+    private NetworkGiveaways net;
+    // Tirages déjà annoncés sur ce serveur (giveaway|tour), pour ne les annoncer qu'une fois
+    private final Set<String> announced = new HashSet<>();
 
     private File dataFile;
     private FileConfiguration dataConfig;
@@ -79,6 +94,9 @@ public class GiveawayManager {
         loadFormatting();
         loadDataFile();
         loadGiveaways();
+        if (net != null) {
+            syncRounds();
+        }
     }
 
     public void reload() {
@@ -92,21 +110,30 @@ public class GiveawayManager {
         pendingRewards.clear();
         historyEntries.clear();
         load();
-        scheduleAll();
+        if (net == null) {
+            scheduleAll();
+        }
     }
 
     public void shutdown() {
         cancelAllTasks();
         saveData();
+        if (net != null) {
+            net.close();
+        }
     }
 
     public void scheduleAll() {
+        if (net != null && !net.isLeader()) {
+            return; // avec SHNetwork, seul le serveur meneur lance les tirages planifiés
+        }
         for (GiveawayDefinition giveaway : giveaways.values()) {
             GiveawayState state = getOrCreateState(giveaway.getId());
             if (!giveaway.isEnabled() || state.isDrawn()) {
                 continue;
             }
 
+            cancelTask(giveaway.getId());
             scheduleDraw(giveaway);
         }
     }
@@ -125,6 +152,10 @@ public class GiveawayManager {
     }
 
     public void handleJoin(Player player) {
+        if (net != null) {
+            handleJoinNetwork(player);
+            return;
+        }
         processPendingRewards(player);
 
         for (GiveawayDefinition giveaway : giveaways.values()) {
@@ -168,6 +199,11 @@ public class GiveawayManager {
 
         GiveawayState state = getOrCreateState(giveaway.getId());
         if (state.isDrawn()) {
+            return true;
+        }
+
+        if (net != null) {
+            drawNetwork(giveaway, manual);
             return true;
         }
 
@@ -234,14 +270,65 @@ public class GiveawayManager {
         }
 
         GiveawayState state = getOrCreateState(giveaway.getId());
-        return color("&7&l« &6&lSH &8&l» &fID: &e" + giveaway.getId()
-            + " &8| &fParticipants: &e" + state.getParticipants().size()
-            + " &8| &fBlacklist: &e" + state.getBlacklisted().size()
-            + " &8| &fGagnants: &e" + state.getWinners().size()
-            + " &8| &fTiré: &e" + (state.isDrawn() ? "oui" : "non"));
+        return formatStatus(giveaway.getId(), state.getParticipants().size(), state.getBlacklisted().size(), state.getWinners().size(), state.isDrawn());
+    }
+
+    private String formatStatus(String id, int participants, int blacklisted, int winners, boolean drawn) {
+        return color("&7&l« &6&lSH &8&l» &fID: &e" + id
+            + " &8| &fParticipants: &e" + participants
+            + " &8| &fBlacklist: &e" + blacklisted
+            + " &8| &fGagnants: &e" + winners
+            + " &8| &fTiré: &e" + (drawn ? "oui" : "non"));
+    }
+
+    /** Comme {@link #getStatus(String)}, avec SHNetwork les compteurs sont lus en base sans bloquer le fil principal. */
+    public void getStatus(String id, Consumer<String> done) {
+        GiveawayDefinition giveaway = net == null ? null : giveaways.get(id.toLowerCase(Locale.ROOT));
+        if (net == null || giveaway == null) {
+            done.accept(getStatus(id));
+            return;
+        }
+        String round = roundOf(giveaway);
+        net.db().async(() -> {
+            GiveawayDb db = net.db();
+            GiveawayDb.RoundRow row = db.readRound(giveaway.getId());
+            return formatStatus(giveaway.getId(),
+                db.count(giveaway.getId(), round, GiveawayDb.PARTICIPANT),
+                db.count(giveaway.getId(), GiveawayDb.ALL_ROUNDS, GiveawayDb.BLACKLIST),
+                db.count(giveaway.getId(), round, GiveawayDb.WINNER),
+                row != null && row.drawn());
+        }).whenComplete((line, error) -> net.bus().sync(() -> done.accept(error != null ? databaseError(error) : line)));
     }
 
     public List<String> getActiveGiveawaysView() {
+        return buildActiveView(giveaway -> getOrCreateState(giveaway.getId()).getParticipants().size());
+    }
+
+    /** Comme {@link #getActiveGiveawaysView()}, avec SHNetwork les participants sont comptés en base. */
+    public void getActiveGiveawaysView(Consumer<List<String>> done) {
+        if (net == null) {
+            done.accept(getActiveGiveawaysView());
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now(zoneId);
+        List<GiveawayDefinition> active = new ArrayList<>();
+        for (GiveawayDefinition giveaway : giveaways.values()) {
+            if (giveaway.isEnabled() && !getOrCreateState(giveaway.getId()).isDrawn() && !now.isAfter(giveaway.getDrawAt())) {
+                active.add(giveaway);
+            }
+        }
+        net.db().async(() -> {
+            Map<String, Integer> counts = new HashMap<>();
+            for (GiveawayDefinition giveaway : active) {
+                counts.put(giveaway.getId(), net.db().count(giveaway.getId(), roundOf(giveaway), GiveawayDb.PARTICIPANT));
+            }
+            return counts;
+        }).whenComplete((counts, error) -> net.bus().sync(() -> done.accept(error != null
+            ? List.of(databaseError(error))
+            : buildActiveView(giveaway -> counts.getOrDefault(giveaway.getId(), 0)))));
+    }
+
+    private List<String> buildActiveView(java.util.function.ToIntFunction<GiveawayDefinition> participants) {
         List<String> lines = new ArrayList<>();
         lines.add(color("&8&m------------------------------------------------"));
         lines.add(color("&7&l« &6&lSH &8&l» &fGiveaways actifs"));
@@ -263,11 +350,10 @@ public class GiveawayManager {
         }
 
         for (GiveawayDefinition giveaway : active) {
-            GiveawayState state = getOrCreateState(giveaway.getId());
             lines.add(color("&8• &e" + giveaway.getId()
                 + " &7| &f" + giveaway.getPrizeDisplay()
                 + " &7| &fTirage: &e" + giveaway.getDrawAt().format(dateFormat) + " " + giveaway.getDrawAt().format(timeFormat)
-                + " &7| &fParticipants: &e" + state.getParticipants().size()));
+                + " &7| &fParticipants: &e" + participants.applyAsInt(giveaway)));
         }
         lines.add(color("&8&m------------------------------------------------"));
         return lines;
@@ -316,6 +402,45 @@ public class GiveawayManager {
         }
         GiveawayState state = getOrCreateState(giveaway.getId());
         return buildUuidListView("Blacklist", giveaway.getId(), state.getBlacklisted(), page);
+    }
+
+    /** Comme {@link #getParticipantsView(String, int)}, avec SHNetwork la page est lue en base. */
+    public void getParticipantsView(String id, int page, Consumer<List<String>> done) {
+        if (net == null) {
+            done.accept(getParticipantsView(id, page));
+            return;
+        }
+        networkUuidListView("Participants", id, GiveawayDb.PARTICIPANT, page, done);
+    }
+
+    /** Comme {@link #getBlacklistView(String, int)}, avec SHNetwork la page est lue en base. */
+    public void getBlacklistView(String id, int page, Consumer<List<String>> done) {
+        if (net == null) {
+            done.accept(getBlacklistView(id, page));
+            return;
+        }
+        networkUuidListView("Blacklist", id, GiveawayDb.BLACKLIST, page, done);
+    }
+
+    private void networkUuidListView(String title, String id, String kind, int requestedPage, Consumer<List<String>> done) {
+        GiveawayDefinition giveaway = giveaways.get(id.toLowerCase(Locale.ROOT));
+        if (giveaway == null) {
+            done.accept(List.of(color("&7&l« &6&lSH &8&l» &cGiveaway introuvable : &e" + id)));
+            return;
+        }
+        int pageSize = 10;
+        String round = GiveawayDb.BLACKLIST.equals(kind) ? GiveawayDb.ALL_ROUNDS : roundOf(giveaway);
+        net.db().async(() -> {
+            int total = net.db().count(giveaway.getId(), round, kind);
+            int maxPage = Math.max(1, (int) Math.ceil(total / (double) pageSize));
+            int page = Math.min(Math.max(1, requestedPage), maxPage);
+            return new UuidPage(total, page, maxPage, net.db().page(giveaway.getId(), round, kind, (page - 1) * pageSize, pageSize));
+        }).whenComplete((shown, error) -> net.bus().sync(() -> done.accept(error != null
+            ? List.of(databaseError(error))
+            : formatUuidListView(title, giveaway.getId(), shown.total(), shown.page(), shown.maxPage(), shown.uuids()))));
+    }
+
+    private record UuidPage(int total, int page, int maxPage, List<UUID> uuids) {
     }
 
     public AdminEditResult addParticipantManually(String id, String target) {
@@ -407,6 +532,125 @@ public class GiveawayManager {
         return AdminEditResult.SUCCESS;
     }
 
+    /** Opération d'administration sur un joueur et un giveaway, avec SHNetwork : exécutée en base. */
+    private interface NetworkEdit {
+        AdminEditResult run(GiveawayDefinition giveaway, String round, UUID uuid) throws java.sql.SQLException;
+    }
+
+    public void addParticipantManually(String id, String target, Consumer<AdminEditResult> done) {
+        if (net == null) {
+            done.accept(addParticipantManually(id, target));
+            return;
+        }
+        networkEdit(id, target, done, (giveaway, round, uuid) -> {
+            if (net.db().has(giveaway.getId(), GiveawayDb.ALL_ROUNDS, GiveawayDb.BLACKLIST, uuid)) {
+                return AdminEditResult.BLACKLISTED;
+            }
+            return net.db().add(giveaway.getId(), round, GiveawayDb.PARTICIPANT, uuid) ? AdminEditResult.SUCCESS : AdminEditResult.ALREADY_PRESENT;
+        });
+    }
+
+    public void removeParticipantManually(String id, String target, Consumer<AdminEditResult> done) {
+        if (net == null) {
+            done.accept(removeParticipantManually(id, target));
+            return;
+        }
+        networkEdit(id, target, done, (giveaway, round, uuid) -> {
+            if (!net.db().remove(giveaway.getId(), round, GiveawayDb.PARTICIPANT, uuid)) {
+                return AdminEditResult.NOT_PRESENT;
+            }
+            net.db().remove(giveaway.getId(), round, GiveawayDb.NOTIFIED, uuid);
+            return AdminEditResult.SUCCESS;
+        });
+    }
+
+    public void blacklistPlayer(String id, String target, Consumer<AdminEditResult> done) {
+        if (net == null) {
+            done.accept(blacklistPlayer(id, target));
+            return;
+        }
+        networkEdit(id, target, done, (giveaway, round, uuid) -> {
+            if (!net.db().add(giveaway.getId(), GiveawayDb.ALL_ROUNDS, GiveawayDb.BLACKLIST, uuid)) {
+                return AdminEditResult.ALREADY_BLACKLISTED;
+            }
+            net.db().remove(giveaway.getId(), round, GiveawayDb.PARTICIPANT, uuid);
+            net.db().remove(giveaway.getId(), round, GiveawayDb.NOTIFIED, uuid);
+            return AdminEditResult.SUCCESS;
+        });
+    }
+
+    public void unblacklistPlayer(String id, String target, Consumer<AdminEditResult> done) {
+        if (net == null) {
+            done.accept(unblacklistPlayer(id, target));
+            return;
+        }
+        networkEdit(id, target, done, (giveaway, round, uuid) ->
+            net.db().remove(giveaway.getId(), GiveawayDb.ALL_ROUNDS, GiveawayDb.BLACKLIST, uuid) ? AdminEditResult.SUCCESS : AdminEditResult.NOT_BLACKLISTED);
+    }
+
+    private void networkEdit(String id, String target, Consumer<AdminEditResult> done, NetworkEdit edit) {
+        GiveawayDefinition giveaway = giveaways.get(id.toLowerCase(Locale.ROOT));
+        if (giveaway == null) {
+            done.accept(AdminEditResult.GIVEAWAY_NOT_FOUND);
+            return;
+        }
+        String round = roundOf(giveaway);
+        net.db().async(() -> {
+            UUID uuid = resolveTargetNetwork(target);
+            return uuid == null ? AdminEditResult.PLAYER_NOT_FOUND : edit.run(giveaway, round, uuid);
+        }).whenComplete((result, error) -> net.bus().sync(() -> {
+            if (error != null) {
+                plugin.getLogger().log(Level.SEVERE, "Modification du giveaway " + id + " impossible, base partagée injoignable.", error);
+                done.accept(AdminEditResult.PLAYER_NOT_FOUND);
+                return;
+            }
+            done.accept(result);
+        }));
+    }
+
+    /**
+     * Joueur visé par une commande d'administration, avec SHNetwork : un UUID, un joueur connecté sur le réseau, un
+     * compte connu de la table des comptes ({@code reseau.table-comptes}), sinon un joueur déjà venu sur ce serveur.
+     * Bloque : hors du fil principal.
+     */
+    private UUID resolveTargetNetwork(String target) {
+        if (target == null || target.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(target);
+        } catch (IllegalArgumentException ignored) {
+        }
+        Optional<UUID> online = net.bus().onlineUuid(target);
+        if (online.isPresent()) {
+            return online.get();
+        }
+        String table = net.accountsTable();
+        if (table != null && !table.isBlank()) {
+            try {
+                String known = net.db().knownName(table, target.toLowerCase(Locale.ROOT));
+                return known == null ? null : offlineUuid(known);
+            } catch (java.sql.SQLException e) {
+                plugin.getLogger().warning("Table des comptes " + table + " illisible, joueurs retrouvés sur ce serveur seulement : " + e.getMessage());
+            }
+        }
+        OfflinePlayer cached = Bukkit.getOfflinePlayerIfCached(target);
+        if (cached == null || cached.getName() == null || !(cached.hasPlayedBefore() || cached.isOnline())) {
+            return null;
+        }
+        return offlineUuid(cached.getName());
+    }
+
+    /** UUID « hors ligne » d'un pseudo, celui de tout le réseau (pas de recherche Mojang). */
+    private static UUID offlineUuid(String name) {
+        return UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String databaseError(Throwable error) {
+        plugin.getLogger().log(Level.WARNING, "Base partagée des giveaways injoignable.", error);
+        return color("&7&l« &c&lSH &8&l» &cBase partagée injoignable.");
+    }
+
     public String color(String input) {
         return org.bukkit.ChatColor.translateAlternateColorCodes('&', input);
     }
@@ -467,6 +711,11 @@ public class GiveawayManager {
         }
 
         GiveawayState state = new GiveawayState();
+        if (net != null) {
+            // Avec SHNetwork, participants et gagnants sont en base : l'état d'ici ne garde que le tour et « tiré »
+            states.put(id, state);
+            return state;
+        }
 
         List<String> participants = dataConfig.getStringList("giveaways." + id + ".participants");
         for (String raw : participants) {
@@ -507,6 +756,9 @@ public class GiveawayManager {
     }
 
     private void ensureRoundState(GiveawayDefinition definition, GiveawayState state) {
+        if (net != null) {
+            return; // le tour est lu en base par syncRounds
+        }
         String currentRoundKey = definition.getRoundKey();
         if (currentRoundKey == null) {
             currentRoundKey = "";
@@ -645,11 +897,21 @@ public class GiveawayManager {
     }
 
     private void processPendingRewards(Player player) {
+        if (net != null) {
+            claimPendingRewards(player, true);
+            return;
+        }
         List<PendingReward> queue = pendingRewards.remove(player.getUniqueId());
         if (queue == null || queue.isEmpty()) {
             return;
         }
 
+        deliverRewards(player, queue, true);
+        saveData();
+    }
+
+    /** Donne les récompenses au joueur : commandes console, message et son de félicitations. */
+    private void deliverRewards(Player player, List<PendingReward> queue, boolean logDelivery) {
         Map<String, Integer> deliveredPerGiveaway = new HashMap<>();
         for (PendingReward reward : queue) {
             String parsed = reward.commandTemplate
@@ -658,7 +920,9 @@ public class GiveawayManager {
             dispatchReward(parsed, reward.giveawayId);
             deliveredPerGiveaway.merge(reward.giveawayId, 1, Integer::sum);
 
-            ActionLog.write(plugin, WINNERS_LOG_FILE, "DELIVER | giveaway=" + reward.giveawayId + " | winner=" + printablePlayer(player) + " | delivery=on_login");
+            if (logDelivery) {
+                ActionLog.write(plugin, WINNERS_LOG_FILE, "DELIVER | giveaway=" + reward.giveawayId + " | winner=" + printablePlayer(player) + " | delivery=on_login");
+            }
         }
 
         for (Map.Entry<String, Integer> entry : deliveredPerGiveaway.entrySet()) {
@@ -668,7 +932,6 @@ public class GiveawayManager {
             }
         }
         playConfiguredSound(player, "sounds.winner-direct");
-        saveData();
     }
 
     private void scheduleJoinMessage(Player player, GiveawayDefinition giveaway, String path, String soundPath) {
@@ -769,6 +1032,10 @@ public class GiveawayManager {
 
     private String applyPlaceholders(String input, GiveawayDefinition giveaway, OfflinePlayer winner, String winnersText, int winnerCount) {
         String winnerName = winner == null ? "" : (winner.getName() == null ? winner.getUniqueId().toString() : winner.getName());
+        return applyPlaceholdersNamed(input, giveaway, winnerName, winnersText, winnerCount);
+    }
+
+    private String applyPlaceholdersNamed(String input, GiveawayDefinition giveaway, String winnerName, String winnersText, int winnerCount) {
         String safeWinners = winnersText == null ? winnerName : winnersText;
 
         return input
@@ -808,7 +1075,9 @@ public class GiveawayManager {
         }
 
         dataConfig = YamlConfiguration.loadConfiguration(dataFile);
-        loadPendingRewards();
+        if (net == null) {
+            loadPendingRewards();
+        }
         loadHistory();
     }
 
@@ -857,26 +1126,30 @@ public class GiveawayManager {
             saveTask.cancel();
             saveTask = null;
         }
-        for (Map.Entry<String, GiveawayState> entry : states.entrySet()) {
-            String id = entry.getKey();
-            GiveawayState state = entry.getValue();
+        if (net == null) {
+            for (Map.Entry<String, GiveawayState> entry : states.entrySet()) {
+                String id = entry.getKey();
+                GiveawayState state = entry.getValue();
 
-            dataConfig.set("giveaways." + id + ".participants", stringifySet(state.getParticipants()));
-            dataConfig.set("giveaways." + id + ".winners", stringifySet(state.getWinners()));
-            dataConfig.set("giveaways." + id + ".notified", stringifySet(state.getNotified()));
-            dataConfig.set("giveaways." + id + ".blacklisted", stringifySet(state.getBlacklisted()));
-            dataConfig.set("giveaways." + id + ".round-key", state.getRoundKey());
-            dataConfig.set("giveaways." + id + ".drawn", state.isDrawn());
-        }
-
-        dataConfig.set("pending-rewards", null);
-        for (Map.Entry<UUID, List<PendingReward>> entry : pendingRewards.entrySet()) {
-            List<String> serialized = new ArrayList<>();
-            for (PendingReward reward : entry.getValue()) {
-                serialized.add(reward.giveawayId + "||" + reward.commandTemplate);
+                dataConfig.set("giveaways." + id + ".participants", stringifySet(state.getParticipants()));
+                dataConfig.set("giveaways." + id + ".winners", stringifySet(state.getWinners()));
+                dataConfig.set("giveaways." + id + ".notified", stringifySet(state.getNotified()));
+                dataConfig.set("giveaways." + id + ".blacklisted", stringifySet(state.getBlacklisted()));
+                dataConfig.set("giveaways." + id + ".round-key", state.getRoundKey());
+                dataConfig.set("giveaways." + id + ".drawn", state.isDrawn());
             }
-            dataConfig.set("pending-rewards." + entry.getKey(), serialized);
+
+            dataConfig.set("pending-rewards", null);
+            for (Map.Entry<UUID, List<PendingReward>> entry : pendingRewards.entrySet()) {
+                List<String> serialized = new ArrayList<>();
+                for (PendingReward reward : entry.getValue()) {
+                    serialized.add(reward.giveawayId + "||" + reward.commandTemplate);
+                }
+                dataConfig.set("pending-rewards." + entry.getKey(), serialized);
+            }
         }
+        // Avec SHNetwork, seul l'historique reste dans data.yml : le reste est en base, et ce qui y était avant
+        // (participants, récompenses en attente) est gardé tel quel pour /shgiveaway import
         dataConfig.set("history", historyEntries);
 
         try {
@@ -927,6 +1200,10 @@ public class GiveawayManager {
         int fromIndex = (page - 1) * pageSize;
         int toIndex = Math.min(total, fromIndex + pageSize);
 
+        return formatUuidListView(title, giveawayId, total, page, maxPage, entries.subList(fromIndex, toIndex));
+    }
+
+    private List<String> formatUuidListView(String title, String giveawayId, int total, int page, int maxPage, List<UUID> shown) {
         List<String> lines = new ArrayList<>();
         lines.add(color("&8&m------------------------------------------------"));
         lines.add(color("&7&l« &6&lSH &8&l» &f" + title + " &8( &e" + giveawayId + " &8) &f: &e" + total));
@@ -938,14 +1215,349 @@ public class GiveawayManager {
             return lines;
         }
 
-        for (int i = fromIndex; i < toIndex; i++) {
-            UUID uuid = entries.get(i);
+        for (UUID uuid : shown) {
             OfflinePlayer player = Bukkit.getOfflinePlayer(uuid);
             String name = player.getName() == null ? "unknown" : player.getName();
             lines.add(color("&8• &e" + name + " &7(" + uuid + ")"));
         }
         lines.add(color("&8&m------------------------------------------------"));
         return lines;
+    }
+
+    // ------------------------------------------------------------------ mode réseau (SHNetwork)
+
+    /**
+     * Passe en mode réseau : participants, gagnants et récompenses en attente sont en base partagée, le bus annonce
+     * les tirages et le serveur meneur lance les tirages planifiés. À appeler avant {@link #load()}.
+     */
+    public void useNetwork(NetworkGiveaways network) {
+        this.net = network;
+        network.bus().listen(network.channel(), this::onNetMessage, true);
+        network.candidate(this::syncRounds, this::cancelAllTasks);
+    }
+
+    private static String roundOf(GiveawayDefinition giveaway) {
+        return giveaway.getRoundKey() == null ? "" : giveaway.getRoundKey();
+    }
+
+    /**
+     * Lit en base le tour de chaque giveaway (le crée, ou passe au tour de la config si la date de tirage a changé),
+     * puis, sur le serveur meneur, planifie les tirages. Appelée au chargement et quand ce serveur devient meneur.
+     */
+    private void syncRounds() {
+        List<GiveawayDefinition> definitions = new ArrayList<>(giveaways.values());
+        // Tirages déjà faits avant le mode réseau (data.yml) : un tour créé en base à leur place est déjà tiré
+        Map<String, Boolean> legacyDrawn = new HashMap<>();
+        for (GiveawayDefinition giveaway : definitions) {
+            String path = "giveaways." + giveaway.getId();
+            legacyDrawn.put(giveaway.getId(), dataConfig.getBoolean(path + ".drawn", false)
+                && roundOf(giveaway).equals(dataConfig.getString(path + ".round-key", "")));
+        }
+        net.db().async(() -> {
+            Map<String, GiveawayDb.RoundRow> rows = new HashMap<>();
+            for (GiveawayDefinition giveaway : definitions) {
+                rows.put(giveaway.getId(), net.db().syncRound(giveaway.getId(), roundOf(giveaway), legacyDrawn.get(giveaway.getId())));
+            }
+            return rows;
+        }).whenComplete((rows, error) -> net.bus().sync(() -> {
+            if (error != null) {
+                plugin.getLogger().log(Level.SEVERE, "Tours des giveaways illisibles dans la base partagée.", error);
+                return;
+            }
+            for (GiveawayDefinition giveaway : definitions) {
+                if (giveaways.get(giveaway.getId()) != giveaway) {
+                    continue; // config rechargée entre-temps
+                }
+                GiveawayState state = getOrCreateState(giveaway.getId());
+                GiveawayDb.RoundRow row = rows.get(giveaway.getId());
+                state.setRoundKey(row.roundKey());
+                state.setDrawn(row.drawn());
+            }
+            scheduleAll();
+        }));
+    }
+
+    private record JoinMessage(GiveawayDefinition giveaway, String path, String soundPath) {
+    }
+
+    /**
+     * Connexion d'un joueur, avec SHNetwork : participation et message « une seule fois » décidés en base, quel que
+     * soit le serveur où il se connecte. Les conditions (permissions, temps de jeu) sont jugées ici, sur le fil principal.
+     */
+    private void handleJoinNetwork(Player player) {
+        processPendingRewards(player);
+
+        LocalDateTime now = LocalDateTime.now(zoneId);
+        List<GiveawayDefinition> active = new ArrayList<>();
+        Map<String, Boolean> eligible = new HashMap<>();
+        for (GiveawayDefinition giveaway : giveaways.values()) {
+            GiveawayState state = getOrCreateState(giveaway.getId());
+            if (!giveaway.isEnabled() || state.isDrawn() || now.isAfter(giveaway.getDrawAt())) {
+                continue;
+            }
+            active.add(giveaway);
+            eligible.put(giveaway.getId(), isEligibleOnJoin(player, giveaway));
+        }
+        if (active.isEmpty()) {
+            return;
+        }
+
+        UUID uuid = player.getUniqueId();
+        net.db().async(() -> {
+            GiveawayDb db = net.db();
+            List<GiveawayDb.Entry> entries = db.entriesOf(uuid);
+            List<JoinMessage> messages = new ArrayList<>();
+            for (GiveawayDefinition giveaway : active) {
+                String id = giveaway.getId();
+                String round = roundOf(giveaway);
+                if (entries.contains(new GiveawayDb.Entry(id, GiveawayDb.ALL_ROUNDS, GiveawayDb.BLACKLIST))) {
+                    continue;
+                }
+
+                boolean participant = entries.contains(new GiveawayDb.Entry(id, round, GiveawayDb.PARTICIPANT));
+                if (!participant && eligible.get(id)) {
+                    db.add(id, round, GiveawayDb.PARTICIPANT, uuid);
+                    if (giveaway.isAnnounceOnJoin() && db.add(id, round, GiveawayDb.NOTIFIED, uuid)) {
+                        messages.add(new JoinMessage(giveaway, "messages.join-added", "sounds.join-added"));
+                    }
+                    continue;
+                }
+
+                if (participant && giveaway.isAnnounceOnJoin() && db.add(id, round, GiveawayDb.NOTIFIED, uuid)) {
+                    messages.add(new JoinMessage(giveaway, "messages.join-already", "sounds.join-already"));
+                }
+            }
+            return messages;
+        }).whenComplete((messages, error) -> net.bus().sync(() -> {
+            if (error != null) {
+                plugin.getLogger().log(Level.SEVERE, "Participation de " + player.getName() + " impossible, base partagée injoignable.", error);
+                return;
+            }
+            for (JoinMessage message : messages) {
+                scheduleJoinMessage(player, message.giveaway(), message.path(), message.soundPath());
+            }
+        }));
+    }
+
+    /**
+     * Tirage, avec SHNetwork : la base désigne le seul serveur qui tire (le premier qui passe {@code drawn} de 0 à 1) ;
+     * celui-là publie le résultat, tous les serveurs l'annoncent. Un échec laisse le giveaway à tirer et, pour un tirage
+     * planifié, le meneur réessaie une minute plus tard.
+     */
+    private void drawNetwork(GiveawayDefinition giveaway, boolean manual) {
+        Set<UUID> excluded = new HashSet<>();
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (!isEligibleAtDraw(online, giveaway)) {
+                excluded.add(online.getUniqueId());
+            }
+        }
+        String round = roundOf(giveaway);
+        net.db().async(() -> net.db().draw(giveaway.getId(), round, giveaway.getWinnersCount(), excluded, giveaway.getRewardCommands()))
+            .whenComplete((outcome, error) -> net.bus().sync(() -> {
+                if (error != null) {
+                    plugin.getLogger().log(Level.SEVERE, "Tirage du giveaway " + giveaway.getId() + " impossible, base partagée injoignable.", error);
+                    if (!manual && net.isLeader()) {
+                        cancelTask(giveaway.getId());
+                        tasks.put(giveaway.getId(), Bukkit.getScheduler().runTaskLater(plugin, () -> draw(giveaway.getId(), false), 1200L));
+                    }
+                    return;
+                }
+                if (!outcome.claimed()) {
+                    // Un autre serveur a tiré avant : son annonce arrive par le bus
+                    getOrCreateState(giveaway.getId()).setDrawn(true);
+                    cancelTask(giveaway.getId());
+                    return;
+                }
+                publishDraw(giveaway, round, outcome.winners());
+                if (manual) {
+                    plugin.getLogger().info("Giveaway " + giveaway.getId() + " tiré manuellement.");
+                }
+            }));
+    }
+
+    private String nameOf(UUID uuid) {
+        Optional<String> online = net.bus().onlineName(uuid);
+        if (online.isPresent()) {
+            return online.get();
+        }
+        String known = Bukkit.getOfflinePlayer(uuid).getName();
+        return known == null ? uuid.toString() : known;
+    }
+
+    private void publishDraw(GiveawayDefinition giveaway, String round, List<UUID> winners) {
+        JsonObject message = new JsonObject();
+        message.addProperty("event", "draw");
+        message.addProperty("id", giveaway.getId());
+        message.addProperty("round", round);
+        JsonArray list = new JsonArray();
+        for (UUID uuid : winners) {
+            String name = nameOf(uuid);
+            JsonObject winner = new JsonObject();
+            winner.addProperty("uuid", uuid.toString());
+            winner.addProperty("name", name);
+            list.add(winner);
+            boolean online = net.bus().onlineName(uuid).isPresent();
+            ActionLog.write(plugin, WINNERS_LOG_FILE, "DRAW | giveaway=" + giveaway.getId() + " | winner=" + name + "(" + uuid + ") | delivery=" + (online ? "immediate" : "queued_on_login"));
+        }
+        message.add("winners", list);
+        net.bus().publish(net.channel(), message);
+    }
+
+    /** Fil principal : message du bus. */
+    private void onNetMessage(JsonObject o) {
+        try {
+            JsonElement event = o.get("event");
+            if (event != null && "draw".equals(event.getAsString())) {
+                onDraw(o);
+            }
+        } catch (RuntimeException e) {
+            plugin.getLogger().warning("Message illisible sur " + net.channel() + " : " + e);
+        }
+    }
+
+    /** Tirage annoncé par le serveur qui l'a fait : annonce, sons, historique, récompenses des gagnants connectés ici. */
+    private void onDraw(JsonObject o) {
+        String id = o.get("id").getAsString();
+        String round = o.get("round").getAsString();
+        GiveawayDefinition giveaway = giveaways.get(id);
+        if (giveaway == null || !roundOf(giveaway).equals(round) || !announced.add(id + "|" + round)) {
+            return;
+        }
+
+        getOrCreateState(id).setDrawn(true);
+        cancelTask(id);
+
+        List<UUID> uuids = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (JsonElement element : o.getAsJsonArray("winners")) {
+            JsonObject winner = element.getAsJsonObject();
+            uuids.add(UUID.fromString(winner.get("uuid").getAsString()));
+            names.add(winner.get("name").getAsString());
+        }
+
+        if (uuids.isEmpty()) {
+            broadcastList("messages.no-participants", giveaway, null, null, 0);
+            playConfiguredSoundForAll("sounds.no-participants");
+            return;
+        }
+
+        String winnersText = String.join(", ", names);
+        for (String line : plugin.getConfig().getStringList("messages.winner-announcement")) {
+            Bukkit.broadcastMessage(color(applyPlaceholdersNamed(line, giveaway, names.get(0), winnersText, names.size())));
+        }
+        playConfiguredSoundForAll("sounds.winner-announcement");
+        appendHistoryEntry(giveaway, winnersText, names.size());
+        saveData();
+
+        for (UUID uuid : uuids) {
+            Player winner = Bukkit.getPlayer(uuid);
+            if (winner != null) {
+                claimPendingRewards(winner, false);
+            }
+        }
+    }
+
+    /**
+     * Réclame en base les récompenses en attente du joueur, une seule fois même si deux serveurs réclament en même
+     * temps, puis les lui donne. S'il est parti entre-temps, elles sont remises en attente.
+     */
+    private void claimPendingRewards(Player player, boolean logDelivery) {
+        UUID uuid = player.getUniqueId();
+        net.db().async(() -> net.db().claimPending(uuid)).whenComplete((rows, error) -> net.bus().sync(() -> {
+            if (error != null) {
+                plugin.getLogger().log(Level.SEVERE, "Récompenses en attente de " + player.getName() + " illisibles, base partagée injoignable.", error);
+                return;
+            }
+            if (rows.isEmpty()) {
+                return;
+            }
+            Player online = Bukkit.getPlayer(uuid);
+            if (online == null) {
+                net.db().async(() -> {
+                    net.db().requeue(uuid, rows);
+                    return null;
+                }).exceptionally(failure -> {
+                    plugin.getLogger().log(Level.SEVERE, "Récompenses de " + uuid + " non remises en attente : " + rows, failure);
+                    return null;
+                });
+                return;
+            }
+            List<PendingReward> queue = new ArrayList<>();
+            for (GiveawayDb.PendingRow row : rows) {
+                queue.add(new PendingReward(row.giveawayId(), row.command()));
+            }
+            deliverRewards(online, queue, logDelivery);
+        }));
+    }
+
+    /**
+     * Reprend dans la base partagée ce que data.yml gardait avant le mode réseau : participants, gagnants, joueurs
+     * prévenus, joueurs exclus, tirages faits et récompenses en attente. Peut être relancée sans rien compter deux fois.
+     *
+     * @param done reçoit {lignes de joueurs reprises, récompenses reprises}, ou null en cas d'échec
+     */
+    public void importLocalData(Consumer<int[]> done) {
+        if (net == null) {
+            done.accept(null);
+            return;
+        }
+        List<String[]> players = new ArrayList<>();
+        List<String[]> pending = new ArrayList<>();
+        List<String[]> drawn = new ArrayList<>();
+        Map<String, String> rounds = new HashMap<>();
+
+        ConfigurationSection section = dataConfig.getConfigurationSection("giveaways");
+        if (section != null) {
+            for (String id : section.getKeys(false)) {
+                String path = "giveaways." + id;
+                String round = dataConfig.getString(path + ".round-key", "");
+                rounds.put(id, round);
+                addImportRows(players, id, round, GiveawayDb.PARTICIPANT, dataConfig.getStringList(path + ".participants"));
+                addImportRows(players, id, round, GiveawayDb.WINNER, dataConfig.getStringList(path + ".winners"));
+                addImportRows(players, id, round, GiveawayDb.NOTIFIED, dataConfig.getStringList(path + ".notified"));
+                addImportRows(players, id, GiveawayDb.ALL_ROUNDS, GiveawayDb.BLACKLIST, dataConfig.getStringList(path + ".blacklisted"));
+                if (dataConfig.getBoolean(path + ".drawn", false)) {
+                    drawn.add(new String[]{id, round});
+                }
+            }
+        }
+
+        ConfigurationSection queued = dataConfig.getConfigurationSection("pending-rewards");
+        if (queued != null) {
+            for (String rawUuid : queued.getKeys(false)) {
+                try {
+                    UUID.fromString(rawUuid);
+                } catch (IllegalArgumentException e) {
+                    continue;
+                }
+                Map<String, Integer> next = new HashMap<>();
+                for (String entry : dataConfig.getStringList("pending-rewards." + rawUuid)) {
+                    String[] parts = entry.split("\\|\\|", 2);
+                    if (parts.length == 2) {
+                        int seq = next.merge(parts[0], 1, Integer::sum) - 1;
+                        pending.add(new String[]{rawUuid, parts[0], rounds.getOrDefault(parts[0], ""), String.valueOf(seq), parts[1]});
+                    }
+                }
+            }
+        }
+
+        net.db().async(() -> net.db().importRows(players, pending, drawn)).whenComplete((counts, error) -> net.bus().sync(() -> {
+            if (error != null) {
+                plugin.getLogger().log(Level.SEVERE, "Reprise de data.yml impossible.", error);
+                done.accept(null);
+                return;
+            }
+            done.accept(counts);
+        }));
+    }
+
+    private static void addImportRows(List<String[]> rows, String giveawayId, String round, String kind, List<String> uuids) {
+        for (String raw : uuids) {
+            try {
+                rows.add(new String[]{giveawayId, round, kind, UUID.fromString(raw).toString()});
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
     }
 
     private void cancelTask(String id) {

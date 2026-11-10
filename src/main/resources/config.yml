@@ -16,11 +16,36 @@
 #   /shgiveaway remove <id> <joueur|uuid>                Désinscrit un joueur.
 #   /shgiveaway blacklist add|remove <id> <joueur|uuid>  Exclut un joueur du giveaway, ou le réintègre.
 #   /shgiveaway blacklist list <id> (page)               Liste les joueurs exclus.
+#   /shgiveaway import                                   Reprend data.yml dans la base partagée (mode réseau).
 #
 # Permission :
 #   shgiveaway.admin   Utiliser /shgiveaway (op par défaut).
 #
 # Les gagnants sont écrits dans le fichier gagnants de SHLogs.
+
+# Plusieurs serveurs de jeu : actif seulement si SHNetwork est installé ; sans lui, rien ne change (tout est dans data.yml).
+# Avec SHNetwork, participants, gagnants, joueurs exclus et récompenses en attente sont dans la base ci-dessous, et :
+#   - un seul tirage pour tout le réseau : le serveur meneur lance les tirages planifiés, la base désigne le seul serveur
+#     qui tire, tous les serveurs annoncent le résultat ;
+#   - un joueur s'inscrit en se connectant sur n'importe quel serveur ;
+#   - un gagnant reçoit sa récompense tout de suite s'il est connecté sur un serveur, sinon à sa prochaine connexion,
+#     une seule fois ;
+#   - data.yml ne garde que l'historique de /shgiveaway history. /shgiveaway import reprend le reste dans la base.
+# Tous les serveurs doivent avoir les mêmes giveaways dans config.yml. Demande un redémarrage : tout le bloc.
+reseau:
+  actif: true
+  # Canal du bus SHNetwork où les tirages sont annoncés aux autres serveurs
+  canal: giveaway
+  base-de-donnees:
+    url: "jdbc:mariadb://127.0.0.1:3306/bo_net"
+    utilisateur: shgiveaway
+    mot-de-passe: CHANGE_ME
+    # Délai maximal de connexion à la base, en millisecondes
+    delai-ms: 5000
+  # Table des comptes connus du réseau (colonnes name en minuscules et display_name) : retrouve un joueur par son
+  # pseudo avec /shgiveaway add, remove et blacklist même s'il ne s'est jamais connecté sur ce serveur.
+  # Vide : seuls les joueurs connectés sur le réseau ou déjà venus sur ce serveur sont retrouvés.
+  table-comptes: "Global.sh_track_firstseen"
 
 settings:
   # Fuseau horaire des dates de tirage (draw-at).

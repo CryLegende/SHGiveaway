@@ -56,20 +56,25 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (sub.equals("import")) {
+            giveawayManager.importLocalData(counts -> sender.sendMessage(counts == null
+                ? giveawayManager.color("&cReprise impossible : elle demande le mode réseau (SHNetwork), voir la console.")
+                : giveawayManager.color("&aReprise terminée : " + counts[0] + " lignes de joueurs et " + counts[1] + " récompenses en attente ajoutées.")));
+            return true;
+        }
+
         if (sub.equals("status")) {
             if (args.length < 2) {
                 sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway status <id>"));
                 return true;
             }
 
-            sender.sendMessage(giveawayManager.getStatus(args[1].toLowerCase(Locale.ROOT)));
+            giveawayManager.getStatus(args[1].toLowerCase(Locale.ROOT), line -> sender.sendMessage(line));
             return true;
         }
 
         if (sub.equals("active")) {
-            for (String line : giveawayManager.getActiveGiveawaysView()) {
-                sender.sendMessage(line);
-            }
+            giveawayManager.getActiveGiveawaysView(lines -> lines.forEach(line -> sender.sendMessage(line)));
             return true;
         }
 
@@ -88,9 +93,7 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
             }
 
             int page = parsePage(args, 2);
-            for (String line : giveawayManager.getParticipantsView(args[1].toLowerCase(Locale.ROOT), page)) {
-                sender.sendMessage(line);
-            }
+            giveawayManager.getParticipantsView(args[1].toLowerCase(Locale.ROOT), page, lines -> lines.forEach(line -> sender.sendMessage(line)));
             return true;
         }
 
@@ -100,8 +103,8 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
 
-            GiveawayManager.AdminEditResult result = giveawayManager.addParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2]);
-            sender.sendMessage(formatManageResult(result, args[2], "ajouté", "déjà inscrit", "dans la blacklist"));
+            giveawayManager.addParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2],
+                result -> sender.sendMessage(formatManageResult(result, args[2], "ajouté", "déjà inscrit", "dans la blacklist")));
             return true;
         }
 
@@ -111,8 +114,8 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
 
-            GiveawayManager.AdminEditResult result = giveawayManager.removeParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2]);
-            sender.sendMessage(formatManageResult(result, args[2], "retiré", "pas inscrit", "dans la blacklist"));
+            giveawayManager.removeParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2],
+                result -> sender.sendMessage(formatManageResult(result, args[2], "retiré", "pas inscrit", "dans la blacklist")));
             return true;
         }
 
@@ -130,9 +133,7 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
                 }
 
                 int page = parsePage(args, 3);
-                for (String line : giveawayManager.getBlacklistView(args[2].toLowerCase(Locale.ROOT), page)) {
-                    sender.sendMessage(line);
-                }
+                giveawayManager.getBlacklistView(args[2].toLowerCase(Locale.ROOT), page, lines -> lines.forEach(line -> sender.sendMessage(line)));
                 return true;
             }
 
@@ -142,8 +143,8 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
                     return true;
                 }
 
-                GiveawayManager.AdminEditResult result = giveawayManager.blacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3]);
-                sender.sendMessage(formatBlacklistResult(result, args[3], true));
+                giveawayManager.blacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3],
+                    result -> sender.sendMessage(formatBlacklistResult(result, args[3], true)));
                 return true;
             }
 
@@ -153,8 +154,8 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
                     return true;
                 }
 
-                GiveawayManager.AdminEditResult result = giveawayManager.unblacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3]);
-                sender.sendMessage(formatBlacklistResult(result, args[3], false));
+                giveawayManager.unblacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3],
+                    result -> sender.sendMessage(formatBlacklistResult(result, args[3], false)));
                 return true;
             }
 
@@ -185,6 +186,7 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
             addIfMatches(suggestions, args[0], "add");
             addIfMatches(suggestions, args[0], "remove");
             addIfMatches(suggestions, args[0], "blacklist");
+            addIfMatches(suggestions, args[0], "import");
             return suggestions;
         }
 
@@ -243,6 +245,7 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(giveawayManager.color("&e/shgiveaway blacklist add <id> <joueur|uuid>"));
         sender.sendMessage(giveawayManager.color("&e/shgiveaway blacklist remove <id> <joueur|uuid>"));
         sender.sendMessage(giveawayManager.color("&e/shgiveaway blacklist list <id> [page]"));
+        sender.sendMessage(giveawayManager.color("&e/shgiveaway import"));
     }
 
     private boolean isGiveawaySubcommand(String sub) {
