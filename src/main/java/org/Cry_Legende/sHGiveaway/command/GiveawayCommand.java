@@ -1,5 +1,6 @@
 package org.Cry_Legende.sHGiveaway.command;
 
+import org.Cry_Legende.sHGiveaway.SHGiveaway;
 import org.Cry_Legende.sHGiveaway.giveaway.GiveawayManager;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -11,249 +12,229 @@ import org.bukkit.entity.Player;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.logging.Level;
 
+/**
+ * /shgiveaway : administration des giveaways. Chaque sous-commande a sa permission shgiveaway.admin.&lt;nom&gt;.
+ */
 public class GiveawayCommand implements CommandExecutor, TabCompleter {
 
+    /** Sous-commandes, dans l'ordre d'affichage de la ligne d'usage. */
+    private static final List<String> SUBCOMMANDS = List.of(
+        "reload", "draw", "status", "active", "history", "participants", "add", "remove", "blacklist", "import", "pending");
+
+    private final SHGiveaway plugin;
     private final GiveawayManager giveawayManager;
 
-    public GiveawayCommand(GiveawayManager giveawayManager) {
+    public GiveawayCommand(SHGiveaway plugin, GiveawayManager giveawayManager) {
+        this.plugin = plugin;
         this.giveawayManager = giveawayManager;
+    }
+
+    private static String permission(String sub) {
+        return "shgiveaway.admin." + sub;
+    }
+
+    /** Sous-commandes que l'expéditeur a le droit d'utiliser. */
+    private static List<String> allowed(CommandSender sender) {
+        List<String> names = new ArrayList<>();
+        for (String sub : SUBCOMMANDS) {
+            if (sender.hasPermission(permission(sub))) {
+                names.add(sub);
+            }
+        }
+        return names;
+    }
+
+    private void send(CommandSender sender, String key, String... replacements) {
+        sender.sendMessage(plugin.message("admin." + key, replacements));
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!sender.hasPermission("shgiveaway.admin")) {
-            sender.sendMessage(giveawayManager.color("&cVous n'avez pas la permission."));
+        List<String> allowed = allowed(sender);
+        if (allowed.isEmpty()) {
+            send(sender, "no-permission");
             return true;
         }
 
-        if (args.length == 0) {
-            sendHelp(sender);
+        String sub = args.length == 0 ? "" : args[0].toLowerCase(Locale.ROOT);
+        if (!allowed.contains(sub)) {
+            send(sender, "usage", "%subcommands%", String.join("|", allowed));
             return true;
         }
 
-        String sub = args[0].toLowerCase(Locale.ROOT);
-        if (sub.equals("reload")) {
-            giveawayManager.reload();
-            sender.sendMessage(giveawayManager.color("&aConfiguration rechargée."));
-            return true;
-        }
-
-        if (sub.equals("draw")) {
-            if (args.length < 2) {
-                sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway draw <id>"));
-                return true;
+        switch (sub) {
+            case "reload" -> reload(sender);
+            case "draw" -> draw(sender, args);
+            case "import" -> giveawayManager.importLocalData(counts -> {
+                if (counts == null) {
+                    send(sender, "import-unavailable");
+                } else {
+                    send(sender, "import-done", "%players%", String.valueOf(counts[0]), "%rewards%", String.valueOf(counts[1]));
+                }
+            });
+            case "status" -> {
+                if (args.length < 2) {
+                    send(sender, "status-usage");
+                } else {
+                    giveawayManager.getStatus(args[1].toLowerCase(Locale.ROOT), sender::sendMessage);
+                }
             }
-
-            String id = args[1].toLowerCase(Locale.ROOT);
-            if (!giveawayManager.hasGiveaway(id)) {
-                sender.sendMessage(giveawayManager.color("&cGiveaway introuvable: " + id));
-                return true;
+            case "active" -> giveawayManager.getActiveGiveawaysView(lines -> lines.forEach(sender::sendMessage));
+            case "history" -> {
+                for (String line : giveawayManager.getHistoryView(parsePage(args, 1))) {
+                    sender.sendMessage(line);
+                }
             }
-
-            giveawayManager.draw(id, true);
-            sender.sendMessage(giveawayManager.color("&aTirage effectué pour " + id + "."));
-            return true;
-        }
-
-        if (sub.equals("import")) {
-            giveawayManager.importLocalData(counts -> sender.sendMessage(counts == null
-                ? giveawayManager.color("&cReprise impossible : elle demande le mode réseau (SHNetwork), voir la console.")
-                : giveawayManager.color("&aReprise terminée : " + counts[0] + " lignes de joueurs et " + counts[1] + " récompenses en attente ajoutées.")));
-            return true;
-        }
-
-        if (sub.equals("status")) {
-            if (args.length < 2) {
-                sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway status <id>"));
-                return true;
+            case "pending" -> giveawayManager.getPendingView(parsePage(args, 1), lines -> lines.forEach(sender::sendMessage));
+            case "participants" -> {
+                if (args.length < 2) {
+                    send(sender, "participants-usage");
+                } else {
+                    giveawayManager.getParticipantsView(args[1].toLowerCase(Locale.ROOT), parsePage(args, 2),
+                        lines -> lines.forEach(sender::sendMessage));
+                }
             }
-
-            giveawayManager.getStatus(args[1].toLowerCase(Locale.ROOT), line -> sender.sendMessage(line));
-            return true;
-        }
-
-        if (sub.equals("active")) {
-            giveawayManager.getActiveGiveawaysView(lines -> lines.forEach(line -> sender.sendMessage(line)));
-            return true;
-        }
-
-        if (sub.equals("history")) {
-            int page = parsePage(args, 1);
-            for (String line : giveawayManager.getHistoryView(page)) {
-                sender.sendMessage(line);
-            }
-            return true;
-        }
-
-        if (sub.equals("participants")) {
-            if (args.length < 2) {
-                sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway participants <id> [page]"));
-                return true;
-            }
-
-            int page = parsePage(args, 2);
-            giveawayManager.getParticipantsView(args[1].toLowerCase(Locale.ROOT), page, lines -> lines.forEach(line -> sender.sendMessage(line)));
-            return true;
-        }
-
-        if (sub.equals("add")) {
-            if (args.length < 3) {
-                sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway add <id> <joueur|uuid>"));
-                return true;
-            }
-
-            giveawayManager.addParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2],
-                result -> sender.sendMessage(formatManageResult(result, args[2], "ajouté", "déjà inscrit", "dans la blacklist")));
-            return true;
-        }
-
-        if (sub.equals("remove")) {
-            if (args.length < 3) {
-                sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway remove <id> <joueur|uuid>"));
-                return true;
-            }
-
-            giveawayManager.removeParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2],
-                result -> sender.sendMessage(formatManageResult(result, args[2], "retiré", "pas inscrit", "dans la blacklist")));
-            return true;
-        }
-
-        if (sub.equals("blacklist")) {
-            if (args.length < 2) {
-                sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway blacklist <add|remove|list> <id> [joueur|page]"));
-                return true;
-            }
-
-            String action = args[1].toLowerCase(Locale.ROOT);
-            if (action.equals("list")) {
+            case "add" -> {
                 if (args.length < 3) {
-                    sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway blacklist list <id> [page]"));
-                    return true;
+                    send(sender, "add-usage");
+                } else {
+                    giveawayManager.addParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2],
+                        result -> sender.sendMessage(manageResult(result, args[2], true)));
                 }
-
-                int page = parsePage(args, 3);
-                giveawayManager.getBlacklistView(args[2].toLowerCase(Locale.ROOT), page, lines -> lines.forEach(line -> sender.sendMessage(line)));
-                return true;
             }
-
-            if (action.equals("add")) {
-                if (args.length < 4) {
-                    sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway blacklist add <id> <joueur|uuid>"));
-                    return true;
+            case "remove" -> {
+                if (args.length < 3) {
+                    send(sender, "remove-usage");
+                } else {
+                    giveawayManager.removeParticipantManually(args[1].toLowerCase(Locale.ROOT), args[2],
+                        result -> sender.sendMessage(manageResult(result, args[2], false)));
                 }
-
-                giveawayManager.blacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3],
-                    result -> sender.sendMessage(formatBlacklistResult(result, args[3], true)));
-                return true;
             }
-
-            if (action.equals("remove")) {
-                if (args.length < 4) {
-                    sender.sendMessage(giveawayManager.color("&cUtilisation: /shgiveaway blacklist remove <id> <joueur|uuid>"));
-                    return true;
-                }
-
-                giveawayManager.unblacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3],
-                    result -> sender.sendMessage(formatBlacklistResult(result, args[3], false)));
-                return true;
-            }
-
-            sender.sendMessage(giveawayManager.color("&cAction blacklist inconnue: " + action));
-            return true;
+            case "blacklist" -> blacklist(sender, args);
+            default -> send(sender, "usage", "%subcommands%", String.join("|", allowed));
         }
-
-        sender.sendMessage(giveawayManager.color("&cSous-commande inconnue."));
-        sendHelp(sender);
         return true;
+    }
+
+    private void reload(CommandSender sender) {
+        try {
+            plugin.applyFiles(plugin.readFiles());
+        } catch (SHGiveaway.ConfigException e) {
+            plugin.getLogger().log(Level.SEVERE, "Rechargement annulé, " + e.getFile() + " illisible : " + e.getMessage());
+            send(sender, "reload-failed", "%file%", e.getFile(), "%error%", String.valueOf(e.getMessage()));
+            return;
+        }
+        giveawayManager.reload();
+        send(sender, "reloaded");
+    }
+
+    private void draw(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            send(sender, "draw-usage");
+            return;
+        }
+        String id = args[1].toLowerCase(Locale.ROOT);
+        if (!giveawayManager.hasGiveaway(id)) {
+            send(sender, "draw-not-found", "%id%", id);
+            return;
+        }
+        giveawayManager.draw(id, true);
+        send(sender, "draw-done", "%id%", id);
+    }
+
+    private void blacklist(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            send(sender, "blacklist-usage");
+            return;
+        }
+        String action = args[1].toLowerCase(Locale.ROOT);
+        switch (action) {
+            case "list" -> {
+                if (args.length < 3) {
+                    send(sender, "blacklist-list-usage");
+                    return;
+                }
+                giveawayManager.getBlacklistView(args[2].toLowerCase(Locale.ROOT), parsePage(args, 3),
+                    lines -> lines.forEach(sender::sendMessage));
+            }
+            case "add" -> {
+                if (args.length < 4) {
+                    send(sender, "blacklist-add-usage");
+                    return;
+                }
+                giveawayManager.blacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3],
+                    result -> sender.sendMessage(blacklistResult(result, args[3], true)));
+            }
+            case "remove" -> {
+                if (args.length < 4) {
+                    send(sender, "blacklist-remove-usage");
+                    return;
+                }
+                giveawayManager.unblacklistPlayer(args[2].toLowerCase(Locale.ROOT), args[3],
+                    result -> sender.sendMessage(blacklistResult(result, args[3], false)));
+            }
+            default -> send(sender, "blacklist-unknown", "%action%", action);
+        }
     }
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> suggestions = new ArrayList<>();
-
-        if (!sender.hasPermission("shgiveaway.admin")) {
+        List<String> allowed = allowed(sender);
+        if (allowed.isEmpty()) {
             return suggestions;
         }
 
         if (args.length == 1) {
-            addIfMatches(suggestions, args[0], "reload");
-            addIfMatches(suggestions, args[0], "draw");
-            addIfMatches(suggestions, args[0], "status");
-            addIfMatches(suggestions, args[0], "active");
-            addIfMatches(suggestions, args[0], "history");
-            addIfMatches(suggestions, args[0], "participants");
-            addIfMatches(suggestions, args[0], "add");
-            addIfMatches(suggestions, args[0], "remove");
-            addIfMatches(suggestions, args[0], "blacklist");
-            addIfMatches(suggestions, args[0], "import");
+            allowed.forEach(sub -> addIfMatches(suggestions, args[0], sub));
+            return suggestions;
+        }
+
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        if (!allowed.contains(sub)) {
             return suggestions;
         }
 
         if (args.length == 2) {
-            if (args[0].equalsIgnoreCase("blacklist")) {
+            if (sub.equals("blacklist")) {
                 addIfMatches(suggestions, args[1], "add");
                 addIfMatches(suggestions, args[1], "remove");
                 addIfMatches(suggestions, args[1], "list");
-                return suggestions;
-            }
-
-            if (isGiveawaySubcommand(args[0])) {
+            } else if (isGiveawaySubcommand(sub)) {
                 addGiveawayIds(suggestions, args[1]);
-                return suggestions;
-            }
-
-            if (args[0].equalsIgnoreCase("history")) {
+            } else if (sub.equals("history") || sub.equals("pending")) {
                 addIfMatches(suggestions, args[1], "1");
-                return suggestions;
             }
+            return suggestions;
         }
 
         if (args.length == 3) {
-            if (args[0].equalsIgnoreCase("blacklist")) {
-                if (args[1].equalsIgnoreCase("add") || args[1].equalsIgnoreCase("remove") || args[1].equalsIgnoreCase("list")) {
+            if (sub.equals("blacklist")) {
+                String action = args[1].toLowerCase(Locale.ROOT);
+                if (action.equals("add") || action.equals("remove") || action.equals("list")) {
                     addGiveawayIds(suggestions, args[2]);
                 }
-                if (args[1].equalsIgnoreCase("list")) {
+                if (action.equals("list")) {
                     addIfMatches(suggestions, args[2], "1");
                 }
-                return suggestions;
-            }
-
-            if (args[0].equalsIgnoreCase("add") || args[0].equalsIgnoreCase("remove")) {
+            } else if (sub.equals("add") || sub.equals("remove")) {
                 addOnlinePlayers(suggestions, args[2]);
-                return suggestions;
             }
+            return suggestions;
         }
 
-        if (args.length == 4 && args[0].equalsIgnoreCase("blacklist") && (args[1].equalsIgnoreCase("add") || args[1].equalsIgnoreCase("remove"))) {
+        if (args.length == 4 && sub.equals("blacklist")
+            && (args[1].equalsIgnoreCase("add") || args[1].equalsIgnoreCase("remove"))) {
             addOnlinePlayers(suggestions, args[3]);
         }
 
         return suggestions;
     }
 
-    private void sendHelp(CommandSender sender) {
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway reload"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway draw <id>"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway status <id>"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway active"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway history [page]"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway participants <id> [page]"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway add <id> <joueur|uuid>"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway remove <id> <joueur|uuid>"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway blacklist add <id> <joueur|uuid>"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway blacklist remove <id> <joueur|uuid>"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway blacklist list <id> [page]"));
-        sender.sendMessage(giveawayManager.color("&e/shgiveaway import"));
-    }
-
     private boolean isGiveawaySubcommand(String sub) {
-        return sub.equalsIgnoreCase("draw")
-            || sub.equalsIgnoreCase("status")
-            || sub.equalsIgnoreCase("participants")
-            || sub.equalsIgnoreCase("add")
-            || sub.equalsIgnoreCase("remove");
+        return sub.equals("draw") || sub.equals("status") || sub.equals("participants") || sub.equals("add") || sub.equals("remove");
     }
 
     private void addGiveawayIds(List<String> suggestions, String input) {
@@ -280,36 +261,26 @@ public class GiveawayCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    private String formatManageResult(GiveawayManager.AdminEditResult result, String target, String successVerb, String alreadyText, String blacklistedText) {
+    private String manageResult(GiveawayManager.AdminEditResult result, String target, boolean add) {
         return switch (result) {
-            case SUCCESS -> giveawayManager.color("&aJoueur " + target + " " + successVerb + " avec succès.");
-            case GIVEAWAY_NOT_FOUND -> giveawayManager.color("&cGiveaway introuvable.");
-            case PLAYER_NOT_FOUND -> giveawayManager.color("&cJoueur introuvable (ou jamais connecté).");
-            case ALREADY_PRESENT -> giveawayManager.color("&eJoueur " + target + " " + alreadyText + ".");
-            case NOT_PRESENT -> giveawayManager.color("&eJoueur " + target + " " + alreadyText + ".");
-            case BLACKLISTED -> giveawayManager.color("&cImpossible, ce joueur est " + blacklistedText + ".");
-            case ALREADY_BLACKLISTED -> giveawayManager.color("&eJoueur déjà blacklisté.");
-            case NOT_BLACKLISTED -> giveawayManager.color("&eJoueur non blacklisté.");
+            case SUCCESS -> plugin.message(add ? "admin.add-success" : "admin.remove-success", "%player%", target);
+            case GIVEAWAY_NOT_FOUND -> plugin.message("admin.giveaway-not-found");
+            case PLAYER_NOT_FOUND -> plugin.message("admin.player-not-found");
+            case ALREADY_PRESENT, NOT_PRESENT -> plugin.message(add ? "admin.add-already" : "admin.remove-not-present", "%player%", target);
+            case BLACKLISTED -> plugin.message("admin.blacklisted");
+            case ALREADY_BLACKLISTED -> plugin.message("admin.already-blacklisted");
+            case NOT_BLACKLISTED -> plugin.message("admin.not-blacklisted");
         };
     }
 
-    private String formatBlacklistResult(GiveawayManager.AdminEditResult result, String target, boolean add) {
-        if (add) {
-            return switch (result) {
-                case SUCCESS -> giveawayManager.color("&aJoueur " + target + " blacklisté avec succès.");
-                case GIVEAWAY_NOT_FOUND -> giveawayManager.color("&cGiveaway introuvable.");
-                case PLAYER_NOT_FOUND -> giveawayManager.color("&cJoueur introuvable (ou jamais connecté).");
-                case ALREADY_BLACKLISTED -> giveawayManager.color("&eJoueur déjà blacklisté.");
-                default -> giveawayManager.color("&cAction impossible.");
-            };
-        }
-
+    private String blacklistResult(GiveawayManager.AdminEditResult result, String target, boolean add) {
         return switch (result) {
-            case SUCCESS -> giveawayManager.color("&aJoueur " + target + " retiré de la blacklist.");
-            case GIVEAWAY_NOT_FOUND -> giveawayManager.color("&cGiveaway introuvable.");
-            case PLAYER_NOT_FOUND -> giveawayManager.color("&cJoueur introuvable (ou jamais connecté).");
-            case NOT_BLACKLISTED -> giveawayManager.color("&eCe joueur n'est pas blacklisté.");
-            default -> giveawayManager.color("&cAction impossible.");
+            case SUCCESS -> plugin.message(add ? "admin.blacklist-add-success" : "admin.blacklist-remove-success", "%player%", target);
+            case GIVEAWAY_NOT_FOUND -> plugin.message("admin.giveaway-not-found");
+            case PLAYER_NOT_FOUND -> plugin.message("admin.player-not-found");
+            case ALREADY_BLACKLISTED -> plugin.message("admin.already-blacklisted");
+            case NOT_BLACKLISTED -> plugin.message("admin.not-blacklisted");
+            default -> plugin.message("admin.action-impossible");
         };
     }
 

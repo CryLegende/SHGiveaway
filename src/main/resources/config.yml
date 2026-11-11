@@ -5,8 +5,10 @@
 # Giveaways planifiés : les joueurs qui remplissent les conditions sont inscrits automatiquement à leur connexion,
 # et le tirage a lieu à la date indiquée. Un gagnant hors-ligne reçoit sa récompense à sa prochaine connexion.
 #
-# Commande :
-#   /shgiveaway reload                                   Recharge config.yml.
+# Commande (racine /shgiveaway, aucun alias) :
+#   /shgiveaway reload                                   Recharge config.yml et messages.yml (sauf le bloc reseau, qui
+#                                                        demande un redémarrage). Un fichier invalide annule le
+#                                                        rechargement. data.yml n'est pas relu.
 #   /shgiveaway draw <id>                                Tire au sort le giveaway tout de suite.
 #   /shgiveaway status <id>                              Affiche l'état d'un giveaway.
 #   /shgiveaway active                                   Liste les giveaways actifs.
@@ -17,11 +19,14 @@
 #   /shgiveaway blacklist add|remove <id> <joueur|uuid>  Exclut un joueur du giveaway, ou le réintègre.
 #   /shgiveaway blacklist list <id> (page)               Liste les joueurs exclus.
 #   /shgiveaway import                                   Reprend data.yml dans la base partagée (mode réseau).
+#   /shgiveaway pending (page)                           Liste les récompenses de gagnants pas encore données.
 #
-# Permission :
-#   shgiveaway.admin   Utiliser /shgiveaway (op par défaut).
+# Permissions :
+#   shgiveaway.admin                   Toutes les sous-commandes (op par défaut).
+#   shgiveaway.admin.<sous-commande>   Une seule sous-commande : reload, draw, status, active, history, participants,
+#                                      add, remove, blacklist, import ou pending (ex. shgiveaway.admin.draw).
 #
-# Les gagnants sont écrits dans le fichier gagnants de SHLogs.
+# Les textes sont dans messages.yml. Les gagnants sont écrits dans le fichier gagnants de SHLogs.
 
 # Plusieurs serveurs de jeu : actif seulement si SHNetwork est installé ; sans lui, rien ne change (tout est dans data.yml).
 # Avec SHNetwork, participants, gagnants, joueurs exclus et récompenses en attente sont dans la base ci-dessous, et :
@@ -56,51 +61,6 @@ settings:
   time-format: "HH:mm"
   # Nombre de tirages gardés dans l'historique de /shgiveaway history (10 au minimum).
   history-limit: 100
-
-# Messages envoyés aux joueurs : une ligne par élément, codes couleur &.
-# Placeholders : %giveaway_id%, %prize%, %amount% (nombre de gagnants), %draw_date%, %draw_time%, %winner%, %winners%,
-# %winner_count%.
-messages:
-  # Joueur inscrit à sa connexion.
-  join-added:
-    - ""
-    - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴇɴ ᴄᴏᴜʀѕ&r &7&l« &6🎉 &8&l»"
-    - ""
-    - "&6🎁 &fRécompense: &e%amount% %prize%"
-    - "&6🎁 &fStatut: &aParticipation prise en compte &8(Automatique)"
-    - "&6🎁 &fTirage: &e%draw_date% &fà &e%draw_time%"
-    - ""
-    - "&8&o(( &7&oMême hors-ligne, vous pouvez gagner."
-    - "&7&oLes résultats seront annoncés sur Discord. &8&o))"
-    - ""
-
-  # Joueur déjà inscrit à sa connexion.
-  join-already:
-    - ""
-    - "&7&l« &6&lGiveaway &8&l» &fVous participez déjà pour &e%prize%&f."
-    - "&7&l« &a&lSH &8&l» &7Tirage prévu le &6%draw_date% &7à &6%draw_time%&7."
-    - ""
-
-  # Annonce à tout le serveur à la fin du tirage.
-  winner-announcement:
-    - ""
-    - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴛᴇʀᴍɪɴᴇ&r &7&l« &6🎉 &8&l»"
-    - ""
-    - "&7Tirage au sort terminé pour &e%prize%&7."
-    - "&8• &a%winner_count% &fGagnant&8(&7s&8) &f: &f%winners%"
-    - ""
-
-  # Message au gagnant, en ligne au tirage ou à sa connexion.
-  winner-personal-online:
-    - ""
-    - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ&r &8• &a&l&nꜰᴇʟɪᴄɪᴛᴀᴛɪᴏɴ&r &7&l« &6🎉 &8&l»"
-    - ""
-    - "&6🎁 &aBravo, vous avez gagné &e%prize%&a !"
-    - "&7Votre récompense giveaway a bien été distribuée."
-
-  # Annonce à tout le serveur quand personne n'est éligible.
-  no-participants:
-    - "&7&l« &c&lSH &8&l» &cAucun participant éligible pour &e%prize%&c."
 
 # Sons joués avec les messages du même nom (winner-direct accompagne winner-personal-online).
 # Chaque son a : enabled, sound (nom Bukkit ou clé minecraft:...), volume, pitch.
@@ -146,6 +106,9 @@ giveaways:
     winners: 1
     # Date et heure du tirage (aaaa-MM-jj HH:mm, fuseau settings.timezone).
     draw-at: "2026-04-26 20:00"
+    # Identifiant du tour (facultatif, par défaut la valeur de draw-at). Quand il change, un nouveau tour commence :
+    # participants et état « tiré » sont remis à zéro. Changer draw-at change donc le tour, sauf si round-key est fixé.
+    # round-key: "tour-1"
 
     # Secondes entre la connexion du joueur et son message de participation.
     join-message-delay-seconds: 4

@@ -58,6 +58,10 @@ public final class GiveawayDb {
     }
 
     /** Récompense en attente d'un gagnant. */
+    /** Nombre de récompenses en attente d'un joueur pour un giveaway (consultation). */
+    public record PendingSummary(UUID uuid, String giveawayId, int count) {
+    }
+
     public record PendingRow(String giveawayId, String roundKey, int seq, String command) {
     }
 
@@ -381,6 +385,23 @@ public final class GiveawayDb {
             }
         }
         return claimed;
+    }
+
+    /** Récompenses en attente par joueur et par giveaway, sans rien réclamer (lecture seule). */
+    public List<PendingSummary> pendingSummary() throws SQLException {
+        List<PendingSummary> rows = new ArrayList<>();
+        try (Connection c = pool.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT uuid, giveaway_id, COUNT(*) FROM giveaway_pending GROUP BY uuid, giveaway_id ORDER BY giveaway_id, uuid");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                try {
+                    rows.add(new PendingSummary(UUID.fromString(rs.getString(1)), rs.getString(2), rs.getInt(3)));
+                } catch (IllegalArgumentException ignored) {
+                    // ligne dont l'UUID est illisible : ignorée
+                }
+            }
+        }
+        return rows;
     }
 
     /** Remet en attente des récompenses réclamées mais pas données (le joueur est parti entre-temps). */

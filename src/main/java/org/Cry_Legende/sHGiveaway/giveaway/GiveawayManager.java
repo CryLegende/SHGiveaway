@@ -90,7 +90,6 @@ public class GiveawayManager {
     }
 
     public void load() {
-        plugin.reloadConfig();
         loadFormatting();
         loadDataFile();
         loadGiveaways();
@@ -99,18 +98,18 @@ public class GiveawayManager {
         }
     }
 
+    /**
+     * Applique les définitions de config.yml déjà relues par le plugin. L'état (participants, gagnants, récompenses
+     * en attente, historique) reste en mémoire : data.yml n'est ni relu ni réécrit. Les tirages sont replanifiés.
+     */
     public void reload() {
-        // Sauvegarde en attente (connexions récentes) : à écrire avant que l'état soit relu depuis le fichier
-        if (saveTask != null) {
-            saveData();
-        }
         cancelAllTasks();
         giveaways.clear();
-        states.clear();
-        pendingRewards.clear();
-        historyEntries.clear();
-        load();
-        if (net == null) {
+        loadFormatting();
+        loadGiveaways();
+        if (net != null) {
+            syncRounds();
+        } else {
             scheduleAll();
         }
     }
@@ -178,14 +177,14 @@ public class GiveawayManager {
                 state.getParticipants().add(uuid);
 
                 if (giveaway.isAnnounceOnJoin() && state.getNotified().add(uuid)) {
-                    scheduleJoinMessage(player, giveaway, "messages.join-added", "sounds.join-added");
+                    scheduleJoinMessage(player, giveaway, "join-added", "sounds.join-added");
                 }
                 scheduleSave();
                 continue;
             }
 
             if (participant && giveaway.isAnnounceOnJoin() && state.getNotified().add(uuid)) {
-                scheduleJoinMessage(player, giveaway, "messages.join-already", "sounds.join-already");
+                scheduleJoinMessage(player, giveaway, "join-already", "sounds.join-already");
                 scheduleSave();
             }
         }
@@ -211,7 +210,7 @@ public class GiveawayManager {
         if (candidates.isEmpty()) {
             state.setDrawn(true);
             saveData();
-            broadcastList("messages.no-participants", giveaway, null, null, 0);
+            broadcastList("no-participants", giveaway, null, null, 0);
             playConfiguredSoundForAll("sounds.no-participants");
             cancelTask(giveaway.getId());
             return true;
@@ -230,7 +229,7 @@ public class GiveawayManager {
             Player onlineWinner = winner.getPlayer();
             if (onlineWinner != null && onlineWinner.isOnline()) {
                 executeRewardCommandsNow(onlineWinner, giveaway);
-                sendMessageList(onlineWinner, "messages.winner-personal-online", giveaway, winner, winner.getName(), 1);
+                sendMessageList(onlineWinner, "winner-personal-online", giveaway, winner, winner.getName(), 1);
                 playConfiguredSound(onlineWinner, "sounds.winner-direct");
                 ActionLog.write(plugin, WINNERS_LOG_FILE, "DRAW | giveaway=" + giveaway.getId() + " | winner=" + printablePlayer(winner) + " | delivery=immediate");
             } else {
@@ -241,7 +240,7 @@ public class GiveawayManager {
 
         String winnersText = stringifyWinners(selectedWinners);
         OfflinePlayer firstWinner = selectedWinners.get(0);
-        broadcastList("messages.winner-announcement", giveaway, firstWinner, winnersText, selectedWinners.size());
+        broadcastList("winner-announcement", giveaway, firstWinner, winnersText, selectedWinners.size());
         playConfiguredSoundForAll("sounds.winner-announcement");
         appendHistoryEntry(giveaway, winnersText, selectedWinners.size());
 
@@ -928,7 +927,7 @@ public class GiveawayManager {
         for (Map.Entry<String, Integer> entry : deliveredPerGiveaway.entrySet()) {
             GiveawayDefinition giveaway = giveaways.get(entry.getKey());
             if (giveaway != null) {
-                sendMessageList(player, "messages.winner-personal-online", giveaway, player, player.getName(), 1);
+                sendMessageList(player, "winner-personal-online", giveaway, player, player.getName(), 1);
             }
         }
         playConfiguredSound(player, "sounds.winner-direct");
@@ -1017,14 +1016,14 @@ public class GiveawayManager {
     }
 
     private void sendMessageList(Player player, String path, GiveawayDefinition giveaway, OfflinePlayer winner, String winnersText, int winnerCount) {
-        List<String> messages = plugin.getConfig().getStringList(path);
+        List<String> messages = plugin.getMessages().getStringList(path);
         for (String line : messages) {
             player.sendMessage(color(applyPlaceholders(line, giveaway, winner, winnersText, winnerCount)));
         }
     }
 
     private void broadcastList(String path, GiveawayDefinition giveaway, OfflinePlayer winner, String winnersText, int winnerCount) {
-        List<String> messages = plugin.getConfig().getStringList(path);
+        List<String> messages = plugin.getMessages().getStringList(path);
         for (String line : messages) {
             Bukkit.broadcastMessage(color(applyPlaceholders(line, giveaway, winner, winnersText, winnerCount)));
         }
@@ -1224,6 +1223,47 @@ public class GiveawayManager {
         return lines;
     }
 
+    /** Récompenses de gagnants pas encore données : un joueur et un giveaway par ligne, 10 lignes par page. */
+    public void getPendingView(int requestedPage, Consumer<List<String>> done) {
+        if (net == null) {
+            List<GiveawayDb.PendingSummary> rows = new ArrayList<>();
+            for (Map.Entry<UUID, List<PendingReward>> entry : pendingRewards.entrySet()) {
+                Map<String, Integer> perGiveaway = new java.util.TreeMap<>();
+                for (PendingReward reward : entry.getValue()) {
+                    perGiveaway.merge(reward.giveawayId, 1, Integer::sum);
+                }
+                perGiveaway.forEach((id, count) -> rows.add(new GiveawayDb.PendingSummary(entry.getKey(), id, count)));
+            }
+            rows.sort(Comparator.comparing(GiveawayDb.PendingSummary::giveawayId).thenComparing(row -> row.uuid().toString()));
+            done.accept(formatPendingView(rows, requestedPage));
+            return;
+        }
+        net.db().async(() -> net.db().pendingSummary())
+            .whenComplete((rows, error) -> net.bus().sync(() -> done.accept(error != null
+                ? List.of(databaseError(error))
+                : formatPendingView(rows, requestedPage))));
+    }
+
+    private List<String> formatPendingView(List<GiveawayDb.PendingSummary> rows, int requestedPage) {
+        int pageSize = 10;
+        int total = rows.size();
+        int maxPage = Math.max(1, (int) Math.ceil(total / (double) pageSize));
+        int page = Math.min(Math.max(1, requestedPage), maxPage);
+        List<String> lines = new ArrayList<>();
+        lines.add(plugin.message("admin.pending-header", "%total%", String.valueOf(total),
+            "%page%", String.valueOf(page), "%pages%", String.valueOf(maxPage)));
+        if (total == 0) {
+            lines.add(plugin.message("admin.pending-empty"));
+            return lines;
+        }
+        for (GiveawayDb.PendingSummary row : rows.subList((page - 1) * pageSize, Math.min(total, page * pageSize))) {
+            OfflinePlayer player = Bukkit.getOfflinePlayer(row.uuid());
+            lines.add(plugin.message("admin.pending-line", "%player%", player.getName() == null ? "unknown" : player.getName(),
+                "%uuid%", row.uuid().toString(), "%giveaway%", row.giveawayId(), "%count%", String.valueOf(row.count())));
+        }
+        return lines;
+    }
+
     // ------------------------------------------------------------------ mode réseau (SHNetwork)
 
     /**
@@ -1318,13 +1358,13 @@ public class GiveawayManager {
                 if (!participant && eligible.get(id)) {
                     db.add(id, round, GiveawayDb.PARTICIPANT, uuid);
                     if (giveaway.isAnnounceOnJoin() && db.add(id, round, GiveawayDb.NOTIFIED, uuid)) {
-                        messages.add(new JoinMessage(giveaway, "messages.join-added", "sounds.join-added"));
+                        messages.add(new JoinMessage(giveaway, "join-added", "sounds.join-added"));
                     }
                     continue;
                 }
 
                 if (participant && giveaway.isAnnounceOnJoin() && db.add(id, round, GiveawayDb.NOTIFIED, uuid)) {
-                    messages.add(new JoinMessage(giveaway, "messages.join-already", "sounds.join-already"));
+                    messages.add(new JoinMessage(giveaway, "join-already", "sounds.join-already"));
                 }
             }
             return messages;
@@ -1436,13 +1476,13 @@ public class GiveawayManager {
         }
 
         if (uuids.isEmpty()) {
-            broadcastList("messages.no-participants", giveaway, null, null, 0);
+            broadcastList("no-participants", giveaway, null, null, 0);
             playConfiguredSoundForAll("sounds.no-participants");
             return;
         }
 
         String winnersText = String.join(", ", names);
-        for (String line : plugin.getConfig().getStringList("messages.winner-announcement")) {
+        for (String line : plugin.getMessages().getStringList("winner-announcement")) {
             Bukkit.broadcastMessage(color(applyPlaceholdersNamed(line, giveaway, names.get(0), winnersText, names.size())));
         }
         playConfiguredSoundForAll("sounds.winner-announcement");

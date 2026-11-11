@@ -1,0 +1,83 @@
+# Messages de SHGiveaway. Codes couleur &. Les messages aux joueurs sont des listes : une ligne par élément.
+# Placeholders : %giveaway_id%, %prize%, %amount% (nombre de gagnants), %draw_date%, %draw_time%, %winner%, %winners%,
+# %winner_count%.
+
+# Joueur inscrit à sa connexion.
+join-added:
+  - ""
+  - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴇɴ ᴄᴏᴜʀѕ&r &7&l« &6🎉 &8&l»"
+  - ""
+  - "&6🎁 &fRécompense: &e%amount% %prize%"
+  - "&6🎁 &fStatut: &aParticipation prise en compte &8(Automatique)"
+  - "&6🎁 &fTirage: &e%draw_date% &fà &e%draw_time%"
+  - ""
+  - "&8&o(( &7&oMême hors-ligne, vous pouvez gagner."
+  - "&7&oLes résultats seront annoncés sur Discord. &8&o))"
+  - ""
+
+# Joueur déjà inscrit à sa connexion.
+join-already:
+  - ""
+  - "&7&l« &6&lGiveaway &8&l» &fVous participez déjà pour &e%prize%&f."
+  - "&7&l« &a&lSH &8&l» &7Tirage prévu le &6%draw_date% &7à &6%draw_time%&7."
+  - ""
+
+# Annonce à tout le serveur à la fin du tirage.
+winner-announcement:
+  - ""
+  - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ ᴛᴇʀᴍɪɴᴇ&r &7&l« &6🎉 &8&l»"
+  - ""
+  - "&7Tirage au sort terminé pour &e%prize%&7."
+  - "&8• &a%winner_count% &fGagnant&8(&7s&8) &f: &f%winners%"
+  - ""
+
+# Message au gagnant, en ligne au tirage ou à sa connexion.
+winner-personal-online:
+  - ""
+  - "&7&l« &6🎉 &8&l» &6&l&nɢɪᴠᴇᴀᴡᴀʏ&r &8• &a&l&nꜰᴇʟɪᴄɪᴛᴀᴛɪᴏɴ&r &7&l« &6🎉 &8&l»"
+  - ""
+  - "&6🎁 &aBravo, vous avez gagné &e%prize%&a !"
+  - "&7Votre récompense giveaway a bien été distribuée."
+
+# Annonce à tout le serveur quand personne n'est éligible.
+no-participants:
+  - "&7&l« &c&lSH &8&l» &cAucun participant éligible pour &e%prize%&c."
+
+# Commande /shgiveaway (messages du staff)
+# Placeholders : %subcommands% (sous-commandes permises), %id% (identifiant du giveaway), %player%, %action%,
+# %players% et %rewards% (import), %file% et %error% (fichier illisible), %total%, %page% et %pages% (pending),
+# %giveaway%, %uuid% et %count% (ligne de pending).
+admin:
+  no-permission: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la &cpermission &7d'utiliser cette commande."
+  usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway &7<&e%subcommands%&7>"
+  reloaded: "&7&l« &a&lSH &8&l» &7Configuration de SHGiveaway &arechargée&7. Le bloc &ereseau &7demande un redémarrage."
+  reload-failed: "&7&l« &c&lSH &8&l» &7Rechargement annulé : &c%file% &7est illisible (&c%error%&7). L'ancienne configuration est gardée."
+  draw-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway draw <id>"
+  draw-not-found: "&7&l« &c&lSH &8&l» &7Giveaway introuvable : &c%id%&7."
+  draw-done: "&7&l« &a&lSH &8&l» &7Tirage effectué pour &a%id%&7."
+  status-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway status <id>"
+  participants-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway participants <id> [page]"
+  add-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway add <id> <joueur|uuid>"
+  remove-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway remove <id> <joueur|uuid>"
+  blacklist-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway blacklist <add|remove|list> <id> [joueur|page]"
+  blacklist-list-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway blacklist list <id> [page]"
+  blacklist-add-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway blacklist add <id> <joueur|uuid>"
+  blacklist-remove-usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shgiveaway blacklist remove <id> <joueur|uuid>"
+  blacklist-unknown: "&7&l« &c&lSH &8&l» &7Action blacklist inconnue : &c%action%&7."
+  import-unavailable: "&7&l« &c&lSH &8&l» &7Reprise impossible : elle demande le mode réseau (SHNetwork), voir la console."
+  import-done: "&7&l« &a&lSH &8&l» &7Reprise terminée : &a%players% &7lignes de joueurs et &a%rewards% &7récompenses en attente ajoutées."
+  giveaway-not-found: "&7&l« &c&lSH &8&l» &7Giveaway introuvable."
+  player-not-found: "&7&l« &c&lSH &8&l» &7Joueur introuvable (ou jamais connecté)."
+  add-success: "&7&l« &a&lSH &8&l» &7Joueur &a%player% &7ajouté avec succès."
+  add-already: "&7&l« &e&lSH &8&l» &7Joueur &e%player% &7déjà inscrit."
+  remove-success: "&7&l« &a&lSH &8&l» &7Joueur &a%player% &7retiré avec succès."
+  remove-not-present: "&7&l« &e&lSH &8&l» &7Joueur &e%player% &7pas inscrit."
+  blacklisted: "&7&l« &c&lSH &8&l» &7Impossible, ce joueur est dans la blacklist."
+  already-blacklisted: "&7&l« &e&lSH &8&l» &7Joueur déjà blacklisté."
+  not-blacklisted: "&7&l« &e&lSH &8&l» &7Ce joueur n'est pas blacklisté."
+  blacklist-add-success: "&7&l« &a&lSH &8&l» &7Joueur &a%player% &7blacklisté avec succès."
+  blacklist-remove-success: "&7&l« &a&lSH &8&l» &7Joueur &a%player% &7retiré de la blacklist."
+  action-impossible: "&7&l« &c&lSH &8&l» &7Action impossible."
+  pending-header: "&7&l« &6&lSH &8&l» &fRécompenses en attente : &e%total% &8| &7Page &e%page%&7/&e%pages%"
+  pending-empty: "&8• &7Aucune récompense en attente."
+  pending-line: "&8• &e%player% &7(%uuid%) &8» &f%giveaway% &7x&e%count%"

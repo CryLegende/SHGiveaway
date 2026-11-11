@@ -26,15 +26,28 @@ Utilisé sur : **Opale**.
 
 ## Commandes
 
-| Commande | Alias | Description | Permission |
-|---|---|---|---|
-| `/shgiveaway` | — | Gestion des giveaways SHGiveaway | `shgiveaway.admin` |
+Racine d'administration `/shgiveaway` (aucun alias). Chaque sous-commande a sa permission `shgiveaway.admin.<sous-commande>` ; `shgiveaway.admin` les donne toutes. Elles marchent aussi depuis la console.
+
+| Commande | Description | Permission |
+|---|---|---|
+| `/shgiveaway reload` | Recharge `config.yml` et `messages.yml` (le bloc `reseau` demande un redémarrage) ; un fichier invalide annule le rechargement ; `data.yml` n'est pas relu | `shgiveaway.admin.reload` |
+| `/shgiveaway draw <id>` | Tire au sort le giveaway tout de suite | `shgiveaway.admin.draw` |
+| `/shgiveaway status <id>` | État d'un giveaway | `shgiveaway.admin.status` |
+| `/shgiveaway active` | Giveaways actifs | `shgiveaway.admin.active` |
+| `/shgiveaway history [page]` | Derniers tirages | `shgiveaway.admin.history` |
+| `/shgiveaway participants <id> [page]` | Participants | `shgiveaway.admin.participants` |
+| `/shgiveaway add <id> <joueur\|uuid>` | Inscrit un joueur | `shgiveaway.admin.add` |
+| `/shgiveaway remove <id> <joueur\|uuid>` | Désinscrit un joueur | `shgiveaway.admin.remove` |
+| `/shgiveaway blacklist add\|remove <id> <joueur\|uuid>`, `/shgiveaway blacklist list <id> [page]` | Exclut un joueur, le réintègre, liste les exclus | `shgiveaway.admin.blacklist` |
+| `/shgiveaway import` | Reprend `data.yml` dans la base partagée (mode réseau) | `shgiveaway.admin.import` |
+| `/shgiveaway pending [page]` | Récompenses de gagnants pas encore données (joueur, giveaway, nombre) | `shgiveaway.admin.pending` |
 
 ## Permissions
 
 | Permission | Description | Par défaut |
 |---|---|---|
-| `shgiveaway.admin` | Administration du plugin SHGiveaway | `op` |
+| `shgiveaway.admin` | Toutes les commandes d'administration (parent des suivantes) | `op` |
+| `shgiveaway.admin.reload`, `.draw`, `.status`, `.active`, `.history`, `.participants`, `.add`, `.remove`, `.blacklist`, `.import`, `.pending` | Une permission par sous-commande | `false` |
 
 ## Configuration
 
@@ -42,10 +55,13 @@ Fichiers par défaut repris du serveur (secrets remplacés par `CHANGE_ME`). Cli
 
 <pre>
 plugins/SHGiveaway/
-└── <a href="src/main/resources/config.yml">config.yml</a>
+├── <a href="src/main/resources/config.yml">config.yml</a>
+└── <a href="src/main/resources/messages.yml">messages.yml</a>
 </pre>
 
-Chaque gagnant (tirage et remise de la récompense à sa connexion) est écrit dans le fichier `gagnants` du dossier `SHGiveaway` de SHLogs (`plugins/SHLogs/`). Sans SHLogs, les lignes passent dans la console. `data.yml` garde l'état des giveaways et l'historique affiché par `/shgiveaway history`.
+Au premier démarrage avec `messages.yml`, le fichier est créé à partir de la section `messages` de l'ancien `config.yml` (textes déjà en place), complétée par ceux du jar ; cette section n'est plus lue ensuite.
+
+Chaque gagnant (tirage et remise de la récompense à sa connexion) est écrit dans le fichier `gagnants` du dossier `SHGiveaway` de SHLogs (`plugins/SHLogs/`). Sans SHLogs, les lignes passent dans la console. `data.yml` garde l'état des giveaways et l'historique affiché par `/shgiveaway history`. Un giveaway se rejoue avec un nouveau tour : `round-key` (par défaut la valeur de `draw-at`) remet participants et état « tiré » à zéro quand il change.
 
 ## Plusieurs serveurs de jeu
 

@@ -15,10 +15,54 @@ libraries:
 commands:
   shgiveaway:
     description: Gestion des giveaways SHGiveaway
-    usage: /shgiveaway <reload|draw|status|active|history|participants|add|remove|blacklist|import>
-    permission: shgiveaway.admin
+    usage: /shgiveaway <reload|draw|status|active|history|participants|add|remove|blacklist|import|pending>
 
 permissions:
   shgiveaway.admin:
-    description: Administration du plugin SHGiveaway
+    description: Toutes les commandes d'administration de SHGiveaway
     default: op
+    children:
+      shgiveaway.admin.reload: true
+      shgiveaway.admin.draw: true
+      shgiveaway.admin.status: true
+      shgiveaway.admin.active: true
+      shgiveaway.admin.history: true
+      shgiveaway.admin.participants: true
+      shgiveaway.admin.add: true
+      shgiveaway.admin.remove: true
+      shgiveaway.admin.blacklist: true
+      shgiveaway.admin.import: true
+      shgiveaway.admin.pending: true
+  shgiveaway.admin.reload:
+    description: Recharger config.yml et messages.yml
+    default: false
+  shgiveaway.admin.draw:
+    description: Tirer un giveaway tout de suite
+    default: false
+  shgiveaway.admin.status:
+    description: Voir l'état d'un giveaway
+    default: false
+  shgiveaway.admin.active:
+    description: Lister les giveaways actifs
+    default: false
+  shgiveaway.admin.history:
+    description: Voir les derniers tirages
+    default: false
+  shgiveaway.admin.participants:
+    description: Lister les participants d'un giveaway
+    default: false
+  shgiveaway.admin.add:
+    description: Inscrire un joueur à un giveaway
+    default: false
+  shgiveaway.admin.remove:
+    description: Désinscrire un joueur d'un giveaway
+    default: false
+  shgiveaway.admin.blacklist:
+    description: Gérer les joueurs exclus d'un giveaway
+    default: false
+  shgiveaway.admin.import:
+    description: Reprendre data.yml dans la base partagée (mode réseau)
+    default: false
+  shgiveaway.admin.pending:
+    description: Voir les récompenses de gagnants pas encore données
+    default: false
