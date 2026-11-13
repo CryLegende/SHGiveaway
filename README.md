@@ -51,7 +51,7 @@ Racine d'administration `/shgiveaway` (aucun alias). Chaque sous-commande a sa p
 
 ## Configuration
 
-Fichiers par défaut repris du serveur (secrets remplacés par `CHANGE_ME`). Cliquez sur un fichier pour l'ouvrir :
+Fichiers par défaut, avec des valeurs d'exemple. Cliquez sur un fichier pour l'ouvrir :
 
 <pre>
 plugins/SHGiveaway/
