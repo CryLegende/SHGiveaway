@@ -42,7 +42,7 @@ reseau:
   # Canal du bus SHNetwork où les tirages sont annoncés aux autres serveurs
   canal: giveaway
   base-de-donnees:
-    url: "jdbc:mariadb://127.0.0.1:3306/bo_net"
+    url: "jdbc:mariadb://127.0.0.1:3306/minecraft"
     utilisateur: shgiveaway
     mot-de-passe: CHANGE_ME
     # Délai maximal de connexion à la base, en millisecondes
@@ -50,7 +50,7 @@ reseau:
   # Table des comptes connus du réseau (colonnes name en minuscules et display_name) : retrouve un joueur par son
   # pseudo avec /shgiveaway add, remove et blacklist même s'il ne s'est jamais connecté sur ce serveur.
   # Vide : seuls les joueurs connectés sur le réseau ou déjà venus sur ce serveur sont retrouvés.
-  table-comptes: "Global.sh_track_firstseen"
+  table-comptes: ""
 
 settings:
   # Fuseau horaire des dates de tirage (draw-at).
@@ -97,15 +97,15 @@ sounds:
 
 # Giveaways, chacun sous son identifiant (celui des commandes /shgiveaway).
 giveaways:
-  vipelite:
+  exemple:
     # Activer ce giveaway.
     enabled: true
     # Récompense affichée dans les messages (%prize%).
-    prize-display: "grade VipElite"
+    prize-display: "10 diamants"
     # Nombre de gagnants tirés.
     winners: 1
     # Date et heure du tirage (aaaa-MM-jj HH:mm, fuseau settings.timezone).
-    draw-at: "2026-04-26 20:00"
+    draw-at: "2027-01-01 20:00"
     # Identifiant du tour (facultatif, par défaut la valeur de draw-at). Quand il change, un nouveau tour commence :
     # participants et état « tiré » sont remis à zéro. Changer draw-at change donc le tour, sauf si round-key est fixé.
     # round-key: "tour-1"
@@ -125,12 +125,12 @@ giveaways:
 
     # Groupes Vault exclus du giveaway.
     excluded-groups:
-      - "VipElite"
+      - "Staff"
     # Permissions qui excluent du giveaway.
     excluded-permissions:
-      - "group.vipelite"
+      - "group.staff"
 
     # Commandes console lancées pour chaque gagnant (%player%, %uuid%). Pour un gagnant hors-ligne, elles attendent
     # sa prochaine connexion.
     reward-commands:
-      - "lp user %player% parent add vipelite"
+      - "give %player% diamond 10"
