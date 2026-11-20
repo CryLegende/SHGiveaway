@@ -77,7 +77,6 @@ public final class SHGiveaway extends JavaPlugin {
             command.setTabCompleter(giveawayCommand);
         }
 
-        getLogger().info("SHGiveaway active.");
     }
 
     @Override
